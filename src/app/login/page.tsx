@@ -1,0 +1,64 @@
+"use client";
+import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+import Link from "next/link";
+
+function LoginForm() {
+  const router = useRouter();
+  const next = useSearchParams().get("next") || "/dashboard";
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try {
+      const res = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Login failed");
+      router.push(next);
+    } catch (err) { setError(err instanceof Error ? err.message : "Login failed"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="grid min-h-screen place-items-center bg-gradient-to-br from-indigo-900 via-blue-900 to-slate-900 px-4">
+      <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl">
+        <div className="text-center">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-indigo-600 to-blue-800 text-3xl">🏛️</div>
+          <h1 className="mt-3 text-2xl font-extrabold text-slate-900">Sanitary ERP</h1>
+          <p className="text-sm text-slate-500">Al-Noor Sanitary &amp; Tiles · Staff Login</p>
+        </div>
+        <form onSubmit={submit} className="mt-6 space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Username</span>
+            <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus
+              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" placeholder="admin" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Password</span>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" placeholder="••••••••" />
+          </label>
+          {error && <div className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-700">{error}</div>}
+          <button disabled={busy} className="w-full rounded-xl bg-indigo-600 py-3 font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+            {busy ? "Signing in…" : "🔐 Sign In"}
+          </button>
+        </form>
+        <div className="mt-5 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">
+          <b>Demo accounts:</b> admin / admin123 · cashier / cash123
+        </div>
+        <div className="mt-4 text-center text-sm">
+          <Link href="/" className="text-indigo-600 hover:underline">← Back to Storefront</Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return <Suspense><LoginForm /></Suspense>;
+}

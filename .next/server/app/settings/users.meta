@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/settings/layout,_N_T_/(erp)/settings/users/layout,_N_T_/(erp)/settings/users/page,_N_T_/settings/users"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/settings/users/__PAGE__",
+    "/!KGVycCk/settings/users",
+    "/!KGVycCk/settings",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}

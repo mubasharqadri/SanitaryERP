@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/inventory/layout,_N_T_/(erp)/inventory/returns/layout,_N_T_/(erp)/inventory/returns/page,_N_T_/inventory/returns"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/inventory/returns/__PAGE__",
+    "/!KGVycCk/inventory/returns",
+    "/!KGVycCk/inventory",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}

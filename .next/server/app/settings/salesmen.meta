@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/settings/layout,_N_T_/(erp)/settings/salesmen/layout,_N_T_/(erp)/settings/salesmen/page,_N_T_/settings/salesmen"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/settings/salesmen/__PAGE__",
+    "/!KGVycCk/settings/salesmen",
+    "/!KGVycCk/settings",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}

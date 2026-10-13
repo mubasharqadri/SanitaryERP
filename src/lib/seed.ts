@@ -1,0 +1,236 @@
+import { db } from "@/db";
+import {
+  companies, currencies, users, permissions, salesmen, accounts,
+  warehouses, parties, partySites, items, letterheads,
+  taxSettings, fbrSettings,
+} from "@/db/schema";
+import { hashPassword } from "@/lib/auth";
+import { eq, sql } from "drizzle-orm";
+
+let seeded: Promise<void> | null = null;
+
+export function ensureSeed(): Promise<void> {
+  if (!seeded) seeded = (async () => {
+    await runSeed();
+    await ensureTaxSeed();
+  })().catch((e) => {
+    seeded = null;
+    throw e;
+  });
+  return seeded;
+}
+
+/** PK tax + FBR defaults — idempotent, also repairs old placeholder STRN. */
+export async function ensureTaxSeed(): Promise<void> {
+  // drizzle-kit push does not diff CHECK constraints, so widen the doc-type
+  // guard here on every boot (idempotent) to include Adjustment Invoices.
+  await db.execute(sql`ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_type_chk`);
+  await db.execute(sql`ALTER TABLE documents ADD CONSTRAINT documents_type_chk
+    CHECK (doc_type IN ('QUOT','SO','SINV','PO','PINV','SRET','PRET','POS','ADJ'))`);
+
+  const t = await db.select().from(taxSettings).limit(1);
+  if (!t[0]) await db.insert(taxSettings).values({});
+  const f = await db.select().from(fbrSettings).limit(1);
+  const comps = await db.select().from(companies).limit(1);
+  const c = comps[0];
+  // Repair the pre-tax-era placeholder STRN (never a user-entered value)
+  if (c && (c.strn === "STRN-001122" || !c.strn)) {
+    await db.update(companies).set({ strn: "3277876123456" }).where(eq(companies.id, c.id));
+  }
+  if (!f[0]) {
+    await db.insert(fbrSettings).values({
+      companyId: c?.id ?? null,
+      businessName: c?.name ?? "Business",
+      ntn: c?.ntn ?? "1234567-8",
+      strn: c?.strn && c.strn !== "STRN-001122" ? c.strn : "3277876123456",
+      address: c?.address ?? null,
+      province: "Punjab",
+      environment: "sandbox",
+      posId: "POS-01",
+      usinPrefix: "USIN",
+      autoSync: false,
+      isActive: true,
+    });
+  } else if (f[0].strn === "STRN-001122" || !f[0].strn) {
+    await db.update(fbrSettings).set({ strn: "3277876123456" }).where(eq(fbrSettings.id, f[0].id));
+  }
+  for (const a of [
+    { code: "1310", name: "AIT Deducted at Source (Receivable)", type: "Asset" },
+    { code: "2110", name: "Further Tax Payable", type: "Liability" },
+  ]) {
+    const rows = await db.select().from(accounts).where(eq(accounts.code, a.code)).limit(1);
+    if (!rows[0]) await db.insert(accounts).values({ code: a.code, name: a.name, type: a.type, isSystem: true });
+  }
+}
+
+async function runSeed() {
+  const existing = await db.select({ id: users.id }).from(users).where(eq(users.username, "admin")).limit(1);
+  if (existing.length > 0) return;
+
+  // Currencies
+  const curRows = await db.insert(currencies).values([
+    { code: "PKR", name: "Pakistani Rupee", symbol: "Rs", rateToBase: "1", isBase: true },
+    { code: "USD", name: "US Dollar", symbol: "$", rateToBase: "278.5", isBase: false },
+    { code: "CNY", name: "Chinese Yuan", symbol: "¥", rateToBase: "38.4", isBase: false },
+  ]).returning();
+  const pkr = curRows.find((c) => c.code === "PKR")!;
+
+  // Company
+  const compRows = await db.insert(companies).values({
+    name: "Al-Noor Sanitary & Tiles",
+    address: "Main G.T. Road, Gujranwala, Pakistan",
+    phone: "055-1234567",
+    email: "info@alnoorsanitry.pk",
+    ntn: "1234567-8",
+    strn: "3277876123456",
+    baseCurrencyId: pkr.id,
+    isDefault: true,
+  }).returning();
+  const company = compRows[0];
+
+  // Chart of accounts
+  const coa: Array<{ code: string; name: string; type: string; openingDebit?: string; openingCredit?: string; isSystem?: boolean }> = [
+    { code: "1001", name: "Cash in Hand", type: "Asset", openingDebit: "500000", isSystem: true },
+    { code: "1002", name: "Bank - Meezan A/C", type: "Asset", openingDebit: "1500000", isSystem: true },
+    { code: "1100", name: "Accounts Receivable", type: "Asset", isSystem: true },
+    { code: "1200", name: "Inventory", type: "Asset", openingDebit: "2500000", isSystem: true },
+    { code: "1300", name: "Advances & Prepayments", type: "Asset" },
+    { code: "1310", name: "AIT Deducted at Source (Receivable)", type: "Asset", isSystem: true },
+    { code: "2001", name: "Accounts Payable", type: "Liability", isSystem: true },
+    { code: "2100", name: "Sales Tax Payable", type: "Liability", isSystem: true },
+    { code: "2110", name: "Further Tax Payable", type: "Liability", isSystem: true },
+    { code: "2200", name: "Withholding / Income Tax Payable", type: "Liability" },
+    { code: "3001", name: "Owner Capital", type: "Equity", openingCredit: "4500000", isSystem: true },
+    { code: "3002", name: "Retained Earnings", type: "Equity" },
+    { code: "4000", name: "Sales Revenue", type: "Income", isSystem: true },
+    { code: "4100", name: "Sales Discount Allowed", type: "Expense" },
+    { code: "4200", name: "Incentive Income", type: "Income" },
+    { code: "5000", name: "Purchases", type: "Expense", isSystem: true },
+    { code: "5100", name: "Purchase Returns", type: "Income" },
+    { code: "5200", name: "Transport Expense", type: "Expense" },
+    { code: "5300", name: "Labor Expense", type: "Expense" },
+    { code: "5400", name: "Salaries Expense", type: "Expense" },
+    { code: "5500", name: "Commission Expense", type: "Expense" },
+    { code: "5600", name: "General Expense", type: "Expense" },
+  ];
+  for (const a of coa) {
+    await db.insert(accounts).values({
+      code: a.code, name: a.name, type: a.type,
+      openingDebit: a.openingDebit ?? "0", openingCredit: a.openingCredit ?? "0",
+      isSystem: a.isSystem ?? false,
+    });
+  }
+
+  // Warehouses
+  const whRows = await db.insert(warehouses).values([
+    { companyId: company.id, code: "WH-01", name: "Main Godown - Gujranwala", address: "G.T. Road Godown #4" },
+    { companyId: company.id, code: "WH-02", name: "Showroom Stock", address: "Main Showroom Basement" },
+  ]).returning();
+  const mainWh = whRows[0];
+
+  // Salesmen
+  const smRows = await db.insert(salesmen).values([
+    { name: "Rashid Mehmood", phone: "0301-1112233", area: "Gujranwala City", commissionRate: "2.5" },
+    { name: "Imran Khan", phone: "0302-4455667", area: "Sialkot / Daska", commissionRate: "3" },
+    { name: "Bilal Ahmed", phone: "0303-7788990", area: "Lahore", commissionRate: "2" },
+  ]).returning();
+
+  // Customers (with PK tax profiles)
+  const custData = [
+    { name: "Haji Traders", city: "Gujranwala", area: "Model Town", phone: "055-1111111", mobile: "0300-1111111", openingBalance: "125000", creditLimit: "500000", salesmanId: smRows[0].id, ntn: "2345678-1", strn: "3277876111001", cnic: "34101-1234567-8", filerStatus: "filer", salesTaxRegistered: true, province: "Punjab" },
+    { name: "City Sanitary Store", city: "Sialkot", area: "Commissioner Road", phone: "052-2222222", mobile: "0300-2222222", openingBalance: "85000", creditLimit: "300000", salesmanId: smRows[1].id, ntn: "3456789-2", strn: "", cnic: "34202-7654321-9", filerStatus: "late_filer", salesTaxRegistered: false, province: "Punjab" },
+    { name: "Modern Bath Gallery", city: "Lahore", area: "DHA Phase 2", phone: "042-3333333", mobile: "0300-3333333", openingBalance: "0", creditLimit: "1000000", salesmanId: smRows[2].id, ntn: "4567890-3", strn: "3277876111002", cnic: "35202-1111111-5", filerStatus: "filer", salesTaxRegistered: true, province: "Punjab" },
+    { name: "Royal Builders", city: "Gujranwala", area: "Citi Housing", phone: "055-4444444", mobile: "0300-4444444", openingBalance: "250000", creditLimit: "2000000", salesmanId: smRows[0].id, ntn: "", strn: "", cnic: "34101-9999999-1", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
+    { name: "Walk-in Customer", city: "Gujranwala", area: "Counter", phone: "-", mobile: "-", openingBalance: "0", creditLimit: "0", salesmanId: null, ntn: "", strn: "", cnic: "", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
+    { name: "Online-Customer", city: "Web Orders", area: "Online Store", phone: "042-111-444-888", mobile: "0300-1112223", email: "orders@alnoorsanitory.pk", openingBalance: "0", creditLimit: "0", salesmanId: null, ntn: "", strn: "", cnic: "", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
+  ];
+  const custRows = [];
+  for (const c of custData) {
+    const r = await db.insert(parties).values({
+      type: "customer", name: c.name, city: c.city, area: c.area, phone: c.phone, mobile: c.mobile,
+      openingBalance: c.openingBalance, creditLimit: c.creditLimit,
+      salesmanId: c.salesmanId, companyId: company.id,
+      cnic: c.cnic || null, ntn: c.ntn || null, strn: c.strn || null,
+      filerStatus: c.filerStatus, salesTaxRegistered: c.salesTaxRegistered, province: c.province,
+    }).returning();
+    custRows.push(r[0]);
+  }
+  await db.insert(partySites).values([
+    { partyId: custRows[3].id, siteName: "Citi Housing Site A", address: "Plot 44, Block C", contactPerson: "Ch. Aslam", contactNumber: "0300-9990001", creditLimit: "800000" },
+    { partyId: custRows[3].id, siteName: "DHA Site B", address: "Plot 12, DHA", contactPerson: "Engr. Tariq", contactNumber: "0300-9990002", creditLimit: "600000" },
+    { partyId: custRows[0].id, siteName: "Shop Godown", address: "Model Town Godown", contactPerson: "Haji Sahab", contactNumber: "0300-1111111", creditLimit: "200000" },
+  ]);
+
+  // Vendors
+  const vendData = [
+    { name: "Pak Ceramics (Pvt) Ltd", city: "Karachi", area: "SITE", phone: "021-5555555", openingBalance: "320000", creditLimit: "1500000", ntn: "5678901-4", filerStatus: "filer", salesTaxRegistered: true },
+    { name: "China Import - Guangzhou Li", city: "Guangzhou", area: "Import", phone: "+86-200000000", openingBalance: "0", creditLimit: "5000000", ntn: "", filerStatus: "non_filer", salesTaxRegistered: false },
+    { name: "Lahore Brass Works", city: "Lahore", area: "Badami Bagh", phone: "042-6666666", openingBalance: "95000", creditLimit: "800000", ntn: "6789012-5", filerStatus: "filer", salesTaxRegistered: true },
+    { name: "Steelline Accessories", city: "Karachi", area: "Korangi", phone: "021-7777777", openingBalance: "45000", creditLimit: "400000", ntn: "7890123-6", filerStatus: "late_filer", salesTaxRegistered: false },
+  ];
+  for (const v of vendData) {
+    await db.insert(parties).values({
+      type: "vendor", name: v.name, city: v.city, area: v.area, phone: v.phone,
+      openingBalance: v.openingBalance, creditLimit: v.creditLimit, companyId: company.id,
+      ntn: v.ntn || null, filerStatus: v.filerStatus, salesTaxRegistered: v.salesTaxRegistered,
+    });
+  }
+
+  // 12-item catalog (with HS/PCT headings for FBR invoices)
+  const catalog = [
+    { code: "SAN-001", barcode: "100001", name: "Commode - One Piece Deluxe", category: "Sanitary Ware", brand: "PakCeram", model: "OP-200", unit: "PCS", size: '26"x14"', color: "White", design: "Modern", origin: "Local", featured: true, costPrice: "14500", salePrice: "18500", reorderLevel: "4", openingStock: "25", hsCode: "6910.1000" },
+    { code: "SAN-002", barcode: "100002", name: "Wall Hung Basin with Pedestal", category: "Sanitary Ware", brand: "PakCeram", model: "WB-110", unit: "PCS", size: '22"x18"', color: "Ivory", design: "Classic", origin: "Local", featured: true, costPrice: "6800", salePrice: "9200", reorderLevel: "6", openingStock: "40", hsCode: "6910.1000" },
+    { code: "SAN-003", barcode: "100003", name: "Imported Vanity Unit Double Drawer", category: "Sanitary Ware", brand: "EuroBath", model: "VN-900", unit: "SET", size: "36 inch", color: "Grey Oak", design: "Premium", origin: "Imported", featured: true, costPrice: "42000", salePrice: "58500", reorderLevel: "2", openingStock: "8", hsCode: "9403.6000" },
+    { code: "TIL-001", barcode: "200001", name: "Floor Tile Glossy - Marble Look", category: "Tiles", brand: "Stile", model: "FT-24", unit: "MTR", size: '24"x24"', color: "Bianco White", design: "Marble", origin: "Local", featured: true, costPrice: "2150", salePrice: "2890", reorderLevel: "100", openingStock: "1200", hsCode: "6907.2100" },
+    { code: "TIL-002", barcode: "200002", name: "Bathroom Wall Tile Matte", category: "Tiles", brand: "KaramCeram", model: "WT-12", unit: "MTR", size: '12"x24"', color: "Sage Green", design: "Stone", origin: "Local", featured: false, costPrice: "1780", salePrice: "2450", reorderLevel: "80", openingStock: "900", hsCode: "6907.2100" },
+    { code: "TIL-003", barcode: "200003", name: "Imported Porcelain Slab - Calacatta", category: "Tiles", brand: "Rovese", model: "PS-120", unit: "MTR", size: '120x60cm', color: "Calacatta Gold", design: "Luxury", origin: "Imported", featured: true, costPrice: "6900", salePrice: "9400", reorderLevel: "30", openingStock: "150", hsCode: "6907.2100" },
+    { code: "BRS-001", barcode: "300001", name: "Bib Cock Heavy Brass - Lever", category: "Brass Fittings", brand: "LahoreBrass", model: "BC-500", unit: "PCS", size: '1/2"', color: "Chrome", design: "Lever", origin: "Local", featured: false, costPrice: "1150", salePrice: "1650", reorderLevel: "20", openingStock: "300", hsCode: "8481.8000" },
+    { code: "BRS-002", barcode: "300002", name: "Wall Mixer - Hot & Cold", category: "Brass Fittings", brand: "LahoreBrass", model: "WM-800", unit: "PCS", size: '3/4"', color: "Chrome", design: "Square", origin: "Local", featured: true, costPrice: "4800", salePrice: "6900", reorderLevel: "10", openingStock: "85", hsCode: "8481.8000" },
+    { code: "BRS-003", barcode: "300003", name: "Imported Rain Shower Set - SS304", category: "Brass Fittings", brand: "EuroBath", model: "RS-10", unit: "SET", size: '10"', color: "Brushed Steel", design: "Rainfall", origin: "Imported", featured: true, costPrice: "16500", salePrice: "22800", reorderLevel: "3", openingStock: "12", hsCode: "8481.8000" },
+    { code: "ACC-001", barcode: "400001", name: "PTMT Connection Pipe Pair", category: "Accessories", brand: "Steelline", model: "CP-24", unit: "PAIR", size: '24"', color: "Silver", design: "Braided", origin: "Local", featured: false, costPrice: "320", salePrice: "480", reorderLevel: "50", openingStock: "500", hsCode: "3917.3100" },
+    { code: "ACC-002", barcode: "400002", name: "Waste Coupling + Bottle Trap Set", category: "Accessories", brand: "Steelline", model: "WT-01", unit: "SET", size: '1-1/4"', color: "Chrome", design: "Standard", origin: "Local", featured: false, costPrice: "890", salePrice: "1350", reorderLevel: "25", openingStock: "180", hsCode: "7324.9000" },
+    { code: "ACC-003", barcode: "400003", name: "Imported Towel Rail + Shelf - Black", category: "Accessories", brand: "EuroBath", model: "TR-BLK", unit: "SET", size: '24"', color: "Matte Black", design: "Minimal", origin: "Imported", featured: false, costPrice: "3400", salePrice: "4950", reorderLevel: "5", openingStock: "3", hsCode: "7324.9000" },
+  ];
+  for (const it of catalog) {
+    await db.insert(items).values({ ...it, warehouseId: mainWh.id } as never);
+  }
+
+  // Users
+  const adminRows = await db.insert(users).values({
+    username: "admin", passwordHash: hashPassword("admin123"),
+    fullName: "Administrator", role: "admin", companyId: company.id,
+  }).returning();
+  const cashierRows = await db.insert(users).values({
+    username: "cashier", passwordHash: hashPassword("cash123"),
+    fullName: "Counter Cashier", role: "cashier", companyId: company.id,
+  }).returning();
+
+  // Cashier permissions: view dashboard, customers, items, sales, pos + create/edit on pos & sales
+  const menuDefaults: Record<string, { v: boolean; c: boolean; e: boolean }> = {
+    dashboard: { v: true, c: false, e: false },
+    customers: { v: true, c: true, e: true },
+    items: { v: true, c: false, e: false },
+    sales: { v: true, c: true, e: false },
+    pos: { v: true, c: true, e: true },
+    stock: { v: true, c: false, e: false },
+  };
+  for (const [menuKey, p] of Object.entries(menuDefaults)) {
+    await db.insert(permissions).values({
+      userId: cashierRows[0].id, menuKey,
+      canView: p.v, canCreate: p.c, canEdit: p.e, canDelete: false, canPrint: true, canExport: false,
+    });
+  }
+  void adminRows;
+
+  // Letterhead
+  await db.insert(letterheads).values({
+    companyId: company.id,
+    name: "Standard",
+    headerText: "AL-NOOR SANITARY & TILES\nMain G.T. Road, Gujranwala | 055-1234567 | info@alnoorsanitory.pk\nNTN: 1234567-8 | STRN: 3277876123456",
+    footerText: "Thank you for your business! | Goods once sold will not be returned without receipt within 7 days.",
+    isDefault: true,
+  });
+
+  // Tax + FBR defaults
+  await ensureTaxSeed();
+}

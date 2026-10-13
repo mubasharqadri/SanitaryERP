@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/accounts/layout,_N_T_/(erp)/accounts/profit-loss/layout,_N_T_/(erp)/accounts/profit-loss/page,_N_T_/accounts/profit-loss"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/accounts/profit-loss/__PAGE__",
+    "/!KGVycCk/accounts/profit-loss",
+    "/!KGVycCk/accounts",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}

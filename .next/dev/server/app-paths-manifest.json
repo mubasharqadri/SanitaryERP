@@ -1,0 +1,13 @@
+{
+  "/(erp)/accounts/chart/page": "app/(erp)/accounts/chart/page.js",
+  "/(erp)/customers/page": "app/(erp)/customers/page.js",
+  "/(erp)/inventory/items/page": "app/(erp)/inventory/items/page.js",
+  "/(erp)/inventory/quotations/page": "app/(erp)/inventory/quotations/page.js",
+  "/api/accounts/route": "app/api/accounts/route.js",
+  "/api/admin/route": "app/api/admin/route.js",
+  "/api/auth/route": "app/api/auth/route.js",
+  "/api/documents/route": "app/api/documents/route.js",
+  "/api/items/route": "app/api/items/route.js",
+  "/api/parties/route": "app/api/parties/route.js",
+  "/api/tax/route": "app/api/tax/route.js"
+}

@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/reports/layout,_N_T_/(erp)/reports/online/layout,_N_T_/(erp)/reports/online/page,_N_T_/reports/online"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/reports/online/__PAGE__",
+    "/!KGVycCk/reports/online",
+    "/!KGVycCk/reports",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}

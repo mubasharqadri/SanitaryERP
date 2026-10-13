@@ -1,0 +1,16 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/pos/layout,_N_T_/(erp)/pos/page,_N_T_/pos"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/pos/__PAGE__",
+    "/!KGVycCk/pos",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}

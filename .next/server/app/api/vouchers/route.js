@@ -1,0 +1,12 @@
+var R=require("../../../chunks/[turbopack]_runtime.js")("server/app/api/vouchers/route.js")
+R.c("server/chunks/[root-of-the-server]__09drct3._.js")
+R.c("server/chunks/_0a2riuw._.js")
+R.c("server/chunks/[root-of-the-server]__0mwyesm._.js")
+R.c("server/chunks/src_db_schema_ts_0.e40xl._.js")
+R.c("server/chunks/[root-of-the-server]__11j~5mn._.js")
+R.c("server/chunks/[root-of-the-server]__0ey-5su._.js")
+R.c("server/chunks/node_modules_drizzle-orm_0xb.nzi._.js")
+R.c("server/chunks/node_modules_next_04~_e52._.js")
+R.c("server/chunks/_next-internal_server_app_api_vouchers_route_actions_0h3822-.js")
+R.m(23048)
+module.exports=R.m(23048).exports

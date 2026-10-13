@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(erp)/layout,_N_T_/(erp)/settings/layout,_N_T_/(erp)/settings/currencies/layout,_N_T_/(erp)/settings/currencies/page,_N_T_/settings/currencies"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGVycCk/settings/currencies/__PAGE__",
+    "/!KGVycCk/settings/currencies",
+    "/!KGVycCk/settings",
+    "/!KGVycCk",
+    "/_index",
+    "/_head"
+  ]
+}
