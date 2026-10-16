@@ -6,6 +6,7 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
 import { num, todayISO } from "@/lib/utils";
 import { nextVoucherNo, audit, round2 } from "@/lib/posting";
+import { scopedWhere, resolveWriteScope, type ScopedUser } from "@/lib/scope";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -14,13 +15,14 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
   const type = url.searchParams.get("type");
+  const scope = scopedWhere(user as ScopedUser, vouchers.companyId, vouchers.branchId, { branchOperational: true });
   if (id) {
-    const v = await db.select().from(vouchers).where(eq(vouchers.id, Number(id)));
+    const v = await db.select().from(vouchers).where(and(eq(vouchers.id, Number(id)), scope));
     if (!v[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const lines = await db.select().from(voucherLines).where(eq(voucherLines.voucherId, Number(id)));
     return NextResponse.json({ voucher: v[0], lines });
   }
-  const rows = await db.select().from(vouchers).where(type ? and(eq(vouchers.voucherType, type)) : undefined).orderBy(desc(vouchers.date), desc(vouchers.id)).limit(300);
+  const rows = await db.select().from(vouchers).where(and(scope, type ? eq(vouchers.voucherType, type) : undefined)).orderBy(desc(vouchers.date), desc(vouchers.id)).limit(300);
   return NextResponse.json({ vouchers: rows });
 }
 
@@ -38,12 +40,15 @@ export async function POST(req: Request) {
   if (td <= 0) return NextResponse.json({ error: "Voucher total must be greater than zero" }, { status: 400 });
   const vType = String(h.voucherType || "JV");
   const date = String(h.date || todayISO());
+  let writeScope;
+  try { writeScope = await resolveWriteScope(user as ScopedUser, h.companyId ? Number(h.companyId) : undefined, h.branchId ? Number(h.branchId) : undefined); }
+  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid company/branch" }, { status: 400 }); }
   const vNo = await nextVoucherNo(vType, date);
   const vRows = await db.insert(vouchers).values({
     voucherType: vType, voucherNo: vNo, date, narration: h.narration || null,
     partyId: h.partyId ? Number(h.partyId) : null, // keep voucher level as optional, but also on lines
     documentId: h.documentId ? Number(h.documentId) : null,
-    companyId: h.companyId ? Number(h.companyId) : null,
+    companyId: writeScope.companyId, branchId: writeScope.branchId,
     currencyId: h.currencyId ? Number(h.currencyId) : null,
     createdBy: user.id, totalDebit: String(td), totalCredit: String(tc),
     documents: h.documents || null,
@@ -73,8 +78,9 @@ export async function PUT(req: Request) {
   const url = new URL(req.url);
   const id = Number(body.id ?? url.searchParams.get("id"));
 
-  const vRows = await db.select().from(vouchers).where(eq(vouchers.id, id)).limit(1);
-  if (!vRows[0]) return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
+  const voucherScope = scopedWhere(user as ScopedUser, vouchers.companyId, vouchers.branchId, { branchOperational: true });
+  const vRows = await db.select().from(vouchers).where(and(eq(vouchers.id, id), voucherScope)).limit(1);
+  if (!vRows[0]) return NextResponse.json({ error: "Voucher not found in your selected company/branch" }, { status: 404 });
 
   if (body.action === "cancel") {
     await db.update(vouchers).set({ status: "Cancelled", narration: `CANCELLED - ${vRows[0].narration ?? ""}` }).where(eq(vouchers.id, id));

@@ -9,6 +9,7 @@ import { nextDocNo, computeTotals, postStock, postFinancialVoucher, deleteDocume
 import { getTaxSettings, aitRateFor, computeInvoiceTax, validateNTN, validateSTRN, type AitSection, type FilerStatus } from "@/lib/tax";
 import { getFbrSettings } from "@/lib/fbr";
 import { syncDocument } from "@/app/api/fbr/route";
+import { scopedWhere, resolveWriteScope, type ScopedUser } from "@/lib/scope";
 
 const STOCK_DIR: Record<string, "in" | "out" | "none"> = {
   QUOT: "none", SO: "none", SINV: "out", POS: "out", PO: "none", PINV: "in", SRET: "in", PRET: "out", ADJ: "in",
@@ -24,13 +25,15 @@ export async function GET(req: Request) {
   const docType = url.searchParams.get("type") ?? "";
   const id = url.searchParams.get("id");
   const partyId = url.searchParams.get("partyId");
+  const scope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
   if (id) {
-    const d = await db.select().from(documents).where(eq(documents.id, Number(id)));
+    const d = await db.select().from(documents).where(and(eq(documents.id, Number(id)), scope));
     if (!d[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const lines = await db.select().from(documentLines).where(eq(documentLines.documentId, Number(id)));
     return NextResponse.json({ document: d[0], lines });
   }
   const conds = [];
+  if (scope) conds.push(scope);
   if (docType) {
     if (docType.includes(",")) conds.push(inArray(documents.docType, docType.split(",")));
     else conds.push(eq(documents.docType, docType));
@@ -49,8 +52,10 @@ export async function POST(req: Request) {
   if (body.action === "convert") {
     const srcId = Number(body.id);
     const target = String(body.target);
-    const src = await db.select().from(documents).where(eq(documents.id, srcId));
-    if (!src[0]) return NextResponse.json({ error: "Source not found" }, { status: 404 });
+    const viewScope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
+    const src = await db.select().from(documents).where(and(eq(documents.id, srcId), viewScope));
+    if (!src[0]) return NextResponse.json({ error: "Source not found in your selected company/branch" }, { status: 404 });
+    const writeScope = await resolveWriteScope(user as ScopedUser, src[0].companyId, src[0].branchId);
     const srcLines = await db.select().from(documentLines).where(eq(documentLines.documentId, srcId));
     const date = todayISO();
     const docNo = await nextDocNo(target, date);
@@ -67,8 +72,8 @@ export async function POST(req: Request) {
       grandTotal: src[0].grandTotal, paidAmount: "0", paymentMode: "credit",
       status: target === "SO" || target === "PO" ? "Open" : "Posted",
       fbrStatus: "not_synced",
-      convertedFromId: srcId, companyId: src[0].companyId, createdBy: user.id,
-      notes: `Converted from ${src[0].docType} ${src[0].docNo}`,
+       convertedFromId: srcId, companyId: writeScope.companyId, branchId: writeScope.branchId, createdBy: user.id,
+       notes: `Converted from ${src[0].docType} ${src[0].docNo}`,
     }).returning();
     const newDoc = dRows[0];
     const plines = [];
@@ -81,12 +86,12 @@ export async function POST(req: Request) {
       plines.push({ itemId: l.itemId, qty: num(l.qty), rate: num(l.rate), returnCondition: l.returnCondition ?? "normal" });
     }
     const dir = STOCK_DIR[target] ?? "none";
-    await postStock(newDoc.id, target, date, newDoc.warehouseId, plines, dir, `${target} ${docNo}`);
+    await postStock(newDoc.id, target, date, newDoc.warehouseId, plines, dir, `${target} ${docNo}`, writeScope.companyId, writeScope.branchId);
     await postFinancialVoucher({
       docId: newDoc.id, docType: target, docNo, date, partyId: newDoc.partyId,
       grandTotal: num(newDoc.grandTotal), paidAmount: 0, paymentMode: "credit",
       salesTax: num(newDoc.salesTax), furtherTax: num(newDoc.furtherTax), aitAmount: num(newDoc.aitAmount),
-      createdBy: user.id, companyId: newDoc.companyId, currencyId: newDoc.currencyId,
+      createdBy: user.id, companyId: writeScope.companyId, branchId: writeScope.branchId, currencyId: newDoc.currencyId,
     });
     await db.update(documents).set({ status: "Invoiced" }).where(eq(documents.id, srcId));
     await audit(user.id, user.username, "create", "documents", String(newDoc.id), { convertedFrom: srcId, target });
@@ -96,7 +101,9 @@ export async function POST(req: Request) {
   if (body.action === "status") {
     const sVal = String(body.status);
     const docId = Number(body.id);
-    const docRows = await db.select().from(documents).where(eq(documents.id, docId)).limit(1);
+    const statusScope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
+    const docRows = await db.select().from(documents).where(and(eq(documents.id, docId), statusScope)).limit(1);
+    if (!docRows[0]) return NextResponse.json({ error: "Document not found in your selected company/branch" }, { status: 404 });
     if (docRows[0] && sVal === "Cancelled") {
       if (docRows[0].fbrStatus === "synced") {
         return NextResponse.json({ error: "Synced FBR invoices cannot be cancelled. Issue a Sales Return instead." }, { status: 400 });
@@ -114,6 +121,9 @@ export async function POST(req: Request) {
   const h = body.header ?? {};
   const docType = String(h.docType || body.docType);
   const date = String(h.date || todayISO());
+  let writeScope;
+  try { writeScope = await resolveWriteScope(user as ScopedUser, h.companyId ? Number(h.companyId) : undefined, h.branchId ? Number(h.branchId) : undefined); }
+  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid company/branch scope" }, { status: 400 }); }
   const rawLines = (body.lines ?? []) as Array<{ itemId?: number | null; description?: string; qty: number; unit?: string; rate: number; discountPct?: number; returnCondition?: string; itemType?: string; taxExempt?: boolean; salesTaxRate?: number | string; furtherTaxRate?: number | string; aitSection?: string; aitRate?: number | string }>;
   if (!rawLines.length) return NextResponse.json({ error: "Add at least one line item" }, { status: 400 });
 
@@ -124,7 +134,8 @@ export async function POST(req: Request) {
   // Validate the return's linked invoice so users get a clear message, not a 500
   const linkedInvoiceId = h.linkedInvoiceId ? Number(h.linkedInvoiceId) : null;
   if (linkedInvoiceId) {
-    const li = await db.select({ id: documents.id, docType: documents.docType }).from(documents).where(eq(documents.id, linkedInvoiceId)).limit(1);
+    const linkedScope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
+    const li = await db.select({ id: documents.id, docType: documents.docType }).from(documents).where(and(eq(documents.id, linkedInvoiceId), linkedScope)).limit(1);
     if (!li[0]) return NextResponse.json({ error: `Linked invoice #${linkedInvoiceId} does not exist. Clear the "Link to Invoice" field or pick a valid one.` }, { status: 400 });
     const allowed = (docType === "SRET" && ["SINV", "POS"].includes(li[0].docType)) || (docType === "PRET" && li[0].docType === "PINV");
     if (!allowed) return NextResponse.json({ error: `A ${docType} can only be linked to ${docType === "SRET" ? "a Sales Invoice (SINV/POS)" : "a Purchase Invoice (PINV)"}.` }, { status: 400 });
@@ -196,7 +207,7 @@ export async function POST(req: Request) {
     linkedInvoiceId,
     walkinName: h.walkinName || null, walkinContact: h.walkinContact || null,
     walkinPhone: h.walkinPhone || null, walkinAddress: h.walkinAddress || null, walkinCity: h.walkinCity || null,
-    companyId: h.companyId ? Number(h.companyId) : null, createdBy: user.id,
+    companyId: writeScope.companyId, branchId: writeScope.branchId, createdBy: user.id,
   }).returning();
   const doc = dRows[0];
   for (let idx = 0; idx < lines.length; idx++) {
@@ -220,12 +231,12 @@ export async function POST(req: Request) {
     });
   }
   const dir = STOCK_DIR[docType] ?? "none";
-  await postStock(doc.id, docType, date, doc.warehouseId, lines.map((l, idx) => ({ itemId: l.itemId ? Number(l.itemId) : null, qty: num(l.qty), rate: num(l.rate), returnCondition: rawLines[idx]?.returnCondition || "normal" })), dir, `${docType} ${docNo}`);
+  await postStock(doc.id, docType, date, doc.warehouseId, lines.map((l, idx) => ({ itemId: l.itemId ? Number(l.itemId) : null, qty: num(l.qty), rate: num(l.rate), returnCondition: rawLines[idx]?.returnCondition || "normal" })), dir, `${docType} ${docNo}`, writeScope.companyId, writeScope.branchId);
   await postFinancialVoucher({
     docId: doc.id, docType, docNo, date, partyId: doc.partyId,
     grandTotal, paidAmount: num(h.paidAmount), paymentMode: doc.paymentMode,
     salesTax, furtherTax, aitAmount,
-    createdBy: user.id, companyId: doc.companyId, currencyId: doc.currencyId,
+    createdBy: user.id, companyId: writeScope.companyId, branchId: writeScope.branchId, currencyId: doc.currencyId,
   });
   await audit(user.id, user.username, "create", "documents", String(doc.id), { docType, docNo, grandTotal, salesTax, furtherTax, ait: aitAmount });
 
@@ -254,6 +265,10 @@ export async function PUT(req: Request) {
   const docRows = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
   const oldDoc = docRows[0];
   if (!oldDoc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+  const editScope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
+  const scopedOld = await db.select({ id: documents.id }).from(documents).where(and(eq(documents.id, id), editScope)).limit(1);
+  if (!scopedOld[0]) return NextResponse.json({ error: "Document not found in your selected company/branch" }, { status: 404 });
+  const writeScope = { companyId: oldDoc.companyId ?? (user as ScopedUser).companyId!, branchId: oldDoc.branchId ?? (user as ScopedUser).branchId! };
   if (oldDoc.fbrStatus === "synced") {
     return NextResponse.json({ error: "FBR-synced invoice cannot be edited (fiscal record). Issue a Sales Return instead." }, { status: 400 });
   }
@@ -280,7 +295,8 @@ export async function PUT(req: Request) {
 
   const linkedInvoiceId = h.linkedInvoiceId ? Number(h.linkedInvoiceId) : null;
   if (linkedInvoiceId) {
-    const li = await db.select({ id: documents.id, docType: documents.docType }).from(documents).where(eq(documents.id, linkedInvoiceId)).limit(1);
+    const linkedScope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
+    const li = await db.select({ id: documents.id, docType: documents.docType }).from(documents).where(and(eq(documents.id, linkedInvoiceId), linkedScope)).limit(1);
     if (!li[0]) return NextResponse.json({ error: `Linked invoice #${linkedInvoiceId} does not exist.` }, { status: 400 });
   }
 
@@ -360,7 +376,7 @@ export async function PUT(req: Request) {
     walkinPhone: h.walkinPhone !== undefined ? (h.walkinPhone || null) : oldDoc.walkinPhone,
     walkinAddress: h.walkinAddress !== undefined ? (h.walkinAddress || null) : oldDoc.walkinAddress,
     walkinCity: h.walkinCity !== undefined ? (h.walkinCity || null) : oldDoc.walkinCity,
-    companyId: h.companyId ? Number(h.companyId) : null, updatedAt: new Date(),
+    companyId: writeScope.companyId, branchId: writeScope.branchId, updatedAt: new Date(),
   }).where(eq(documents.id, id));
 
   // Insert new lines
@@ -387,12 +403,12 @@ export async function PUT(req: Request) {
 
   // Re-post stock ledger + financial vouchers
   const dir = STOCK_DIR[docType] ?? "none";
-  await postStock(id, docType, date, h.warehouseId ? Number(h.warehouseId) : null, lines.map((l, idx) => ({ itemId: l.itemId ? Number(l.itemId) : null, qty: num(l.qty), rate: num(l.rate), returnCondition: rawLines[idx]?.returnCondition || "normal" })), dir, `${docType} ${oldDoc.docNo}`);
+  await postStock(id, docType, date, h.warehouseId ? Number(h.warehouseId) : null, lines.map((l, idx) => ({ itemId: l.itemId ? Number(l.itemId) : null, qty: num(l.qty), rate: num(l.rate), returnCondition: rawLines[idx]?.returnCondition || "normal" })), dir, `${docType} ${oldDoc.docNo}`, writeScope.companyId, writeScope.branchId);
   await postFinancialVoucher({
     docId: id, docType, docNo: oldDoc.docNo, date, partyId,
     grandTotal, paidAmount: num(h.paidAmount), paymentMode: h.paymentMode || "credit",
     salesTax, furtherTax, aitAmount,
-    createdBy: user.id, companyId: oldDoc.companyId, currencyId: oldDoc.currencyId,
+    createdBy: user.id, companyId: writeScope.companyId, branchId: writeScope.branchId, currencyId: oldDoc.currencyId,
   });
 
   await audit(user.id, user.username, "update", "documents", String(id), { docNo: oldDoc.docNo });

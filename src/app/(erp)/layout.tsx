@@ -67,7 +67,7 @@ const NAV: Array<{ section: string; links: NavLink[] }> = [
 
 export default function ErpLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const [user, setUser] = useState<{ fullName: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ fullName: string; role: string; companyName?: string | null; branchName?: string | null; allBranches?: boolean } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [canUp, setCanUp] = useState(false);
@@ -122,7 +122,9 @@ export default function ErpLayout({ children }: { children: React.ReactNode }) {
         </div>
         <div className="flex items-center gap-3">
           <Link href="/" className="hidden rounded-lg px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 sm:block">🌐 Storefront</Link>
-          <span className="hidden text-xs text-slate-400 md:block">{user ? `${user.fullName} (${user.role})` : "…"}</span>
+          <span className="hidden text-right text-[11px] leading-tight text-slate-300 md:block">
+            {user ? <><b className="text-white">{user.companyName ?? "Company"}</b><br />{user.allBranches ? "All branches · Head Office" : user.branchName ?? "Branch"} · {user.fullName} ({user.role})</> : "…"}
+          </span>
           <LogoutButton />
         </div>
       </header>

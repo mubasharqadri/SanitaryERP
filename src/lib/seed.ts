@@ -1,17 +1,18 @@
 import { db } from "@/db";
 import {
-  companies, currencies, users, permissions, salesmen, accounts,
-  warehouses, parties, partySites, items, letterheads,
+  companies, branches, currencies, users, permissions, salesmen, accounts,
+  warehouses, parties, partySites, items, letterheads, documents, vouchers, stockLedger, incentives,
   taxSettings, fbrSettings,
 } from "@/db/schema";
 import { hashPassword } from "@/lib/auth";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and, isNull, or } from "drizzle-orm";
 
 let seeded: Promise<void> | null = null;
 
 export function ensureSeed(): Promise<void> {
   if (!seeded) seeded = (async () => {
     await runSeed();
+    await ensureBranchSeed();
     await ensureTaxSeed();
   })().catch((e) => {
     seeded = null;
@@ -20,10 +21,49 @@ export function ensureSeed(): Promise<void> {
   return seeded;
 }
 
+/** Ensure every company has a head-office branch and backfill legacy rows. */
+export async function ensureBranchSeed(): Promise<void> {
+  const comps = await db.select().from(companies);
+  const defaultCompanyId = comps.find((c) => c.isDefault)?.id ?? comps[0]?.id ?? null;
+  for (const c of comps) {
+    let b = (await db.select().from(branches).where(and(eq(branches.companyId, c.id), eq(branches.code, "HO"))).limit(1))[0];
+    if (!b) {
+      b = (await db.insert(branches).values({
+        companyId: c.id, code: "HO", name: "Head Office", address: c.address ?? null,
+        phone: c.phone ?? null, isHeadOffice: true, active: true,
+      }).returning())[0];
+    }
+    const defaultCompany = c.id === defaultCompanyId;
+    // Legacy staff: non-admins are assigned to the company's HO; admins remain all-branch capable.
+    await db.update(users).set({ branchId: b.id }).where(and(eq(users.companyId, c.id), isNull(users.branchId), sql`${users.role} <> 'admin'`));
+    // Assign company + HO to legacy operational records missing scope. Master records retain the company/branch association.
+    const nullCompany = defaultCompany ? isNull(warehouses.companyId) : sql`false`;
+    await db.update(warehouses).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(warehouses.companyId, c.id), nullCompany), isNull(warehouses.branchId)));
+    const nullAccCompany = defaultCompany ? isNull(accounts.companyId) : sql`false`;
+    await db.update(accounts).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(accounts.companyId, c.id), nullAccCompany), isNull(accounts.branchId)));
+    const nullSalesCompany = defaultCompany ? isNull(salesmen.companyId) : sql`false`;
+    await db.update(salesmen).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(salesmen.companyId, c.id), nullSalesCompany), isNull(salesmen.branchId)));
+    const nullPartyCompany = defaultCompany ? isNull(parties.companyId) : sql`false`;
+    await db.update(parties).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(parties.companyId, c.id), nullPartyCompany), isNull(parties.branchId)));
+    const nullItemCompany = defaultCompany ? isNull(items.companyId) : sql`false`;
+    await db.update(items).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(items.companyId, c.id), nullItemCompany), isNull(items.branchId)));
+    const nullDocCompany = defaultCompany ? isNull(documents.companyId) : sql`false`;
+    await db.update(documents).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(documents.companyId, c.id), nullDocCompany), isNull(documents.branchId)));
+    const nullVoucherCompany = defaultCompany ? isNull(vouchers.companyId) : sql`false`;
+    await db.update(vouchers).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(vouchers.companyId, c.id), nullVoucherCompany), isNull(vouchers.branchId)));
+    const nullStockCompany = defaultCompany ? isNull(stockLedger.companyId) : sql`false`;
+    await db.update(stockLedger).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(stockLedger.companyId, c.id), nullStockCompany), isNull(stockLedger.branchId)));
+    const nullLetterCompany = defaultCompany ? isNull(letterheads.companyId) : sql`false`;
+    await db.update(letterheads).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(letterheads.companyId, c.id), nullLetterCompany), isNull(letterheads.branchId)));
+    const nullFbrCompany = defaultCompany ? isNull(fbrSettings.companyId) : sql`false`;
+    await db.update(fbrSettings).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(fbrSettings.companyId, c.id), nullFbrCompany), isNull(fbrSettings.branchId)));
+    const nullIncentiveCompany = defaultCompany ? isNull(incentives.companyId) : sql`false`;
+    await db.update(incentives).set({ companyId: c.id, branchId: b.id }).where(and(or(eq(incentives.companyId, c.id), nullIncentiveCompany), isNull(incentives.branchId)));
+  }
+}
+
 /** PK tax + FBR defaults — idempotent, also repairs old placeholder STRN. */
 export async function ensureTaxSeed(): Promise<void> {
-  // drizzle-kit push does not diff CHECK constraints, so widen the doc-type
-  // guard here on every boot (idempotent) to include Adjustment Invoices.
   await db.execute(sql`ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_type_chk`);
   await db.execute(sql`ALTER TABLE documents ADD CONSTRAINT documents_type_chk
     CHECK (doc_type IN ('QUOT','SO','SINV','PO','PINV','SRET','PRET','POS','ADJ'))`);
@@ -33,23 +73,15 @@ export async function ensureTaxSeed(): Promise<void> {
   const f = await db.select().from(fbrSettings).limit(1);
   const comps = await db.select().from(companies).limit(1);
   const c = comps[0];
-  // Repair the pre-tax-era placeholder STRN (never a user-entered value)
   if (c && (c.strn === "STRN-001122" || !c.strn)) {
     await db.update(companies).set({ strn: "3277876123456" }).where(eq(companies.id, c.id));
   }
   if (!f[0]) {
     await db.insert(fbrSettings).values({
-      companyId: c?.id ?? null,
-      businessName: c?.name ?? "Business",
-      ntn: c?.ntn ?? "1234567-8",
-      strn: c?.strn && c.strn !== "STRN-001122" ? c.strn : "3277876123456",
-      address: c?.address ?? null,
-      province: "Punjab",
-      environment: "sandbox",
-      posId: "POS-01",
-      usinPrefix: "USIN",
-      autoSync: false,
-      isActive: true,
+      companyId: c?.id ?? null, businessName: c?.name ?? "Business",
+      ntn: c?.ntn ?? "1234567-8", strn: c?.strn && c.strn !== "STRN-001122" ? c.strn : "3277876123456",
+      address: c?.address ?? null, province: "Punjab", environment: "sandbox",
+      posId: "POS-01", usinPrefix: "USIN", autoSync: false, isActive: true,
     });
   } else if (f[0].strn === "STRN-001122" || !f[0].strn) {
     await db.update(fbrSettings).set({ strn: "3277876123456" }).where(eq(fbrSettings.id, f[0].id));
@@ -67,7 +99,6 @@ async function runSeed() {
   const existing = await db.select({ id: users.id }).from(users).where(eq(users.username, "admin")).limit(1);
   if (existing.length > 0) return;
 
-  // Currencies
   const curRows = await db.insert(currencies).values([
     { code: "PKR", name: "Pakistani Rupee", symbol: "Rs", rateToBase: "1", isBase: true },
     { code: "USD", name: "US Dollar", symbol: "$", rateToBase: "278.5", isBase: false },
@@ -75,20 +106,16 @@ async function runSeed() {
   ]).returning();
   const pkr = curRows.find((c) => c.code === "PKR")!;
 
-  // Company
-  const compRows = await db.insert(companies).values({
-    name: "Al-Noor Sanitary & Tiles",
-    address: "Main G.T. Road, Gujranwala, Pakistan",
-    phone: "055-1234567",
-    email: "info@alnoorsanitry.pk",
-    ntn: "1234567-8",
-    strn: "3277876123456",
-    baseCurrencyId: pkr.id,
-    isDefault: true,
-  }).returning();
-  const company = compRows[0];
+  const comp = (await db.insert(companies).values({
+    name: "Al-Noor Sanitary & Tiles", address: "Main G.T. Road, Gujranwala, Pakistan",
+    phone: "055-1234567", email: "info@alnoorsanitry.pk", ntn: "1234567-8",
+    strn: "3277876123456", baseCurrencyId: pkr.id, isDefault: true,
+  }).returning())[0];
+  const ho = (await db.insert(branches).values({
+    companyId: comp.id, code: "HO", name: "Head Office", address: comp.address,
+    phone: comp.phone, isHeadOffice: true, active: true,
+  }).returning())[0];
 
-  // Chart of accounts
   const coa: Array<{ code: string; name: string; type: string; openingDebit?: string; openingCredit?: string; isSystem?: boolean }> = [
     { code: "1001", name: "Cash in Hand", type: "Asset", openingDebit: "500000", isSystem: true },
     { code: "1002", name: "Bank - Meezan A/C", type: "Asset", openingDebit: "1500000", isSystem: true },
@@ -113,29 +140,19 @@ async function runSeed() {
     { code: "5500", name: "Commission Expense", type: "Expense" },
     { code: "5600", name: "General Expense", type: "Expense" },
   ];
-  for (const a of coa) {
-    await db.insert(accounts).values({
-      code: a.code, name: a.name, type: a.type,
-      openingDebit: a.openingDebit ?? "0", openingCredit: a.openingCredit ?? "0",
-      isSystem: a.isSystem ?? false,
-    });
-  }
+  for (const a of coa) await db.insert(accounts).values({ ...a, companyId: comp.id, branchId: ho.id });
 
-  // Warehouses
   const whRows = await db.insert(warehouses).values([
-    { companyId: company.id, code: "WH-01", name: "Main Godown - Gujranwala", address: "G.T. Road Godown #4" },
-    { companyId: company.id, code: "WH-02", name: "Showroom Stock", address: "Main Showroom Basement" },
+    { companyId: comp.id, branchId: ho.id, code: "WH-01", name: "Main Godown - Gujranwala", address: "G.T. Road Godown #4" },
+    { companyId: comp.id, branchId: ho.id, code: "WH-02", name: "Showroom Stock", address: "Main Showroom Basement" },
   ]).returning();
   const mainWh = whRows[0];
-
-  // Salesmen
   const smRows = await db.insert(salesmen).values([
-    { name: "Rashid Mehmood", phone: "0301-1112233", area: "Gujranwala City", commissionRate: "2.5" },
-    { name: "Imran Khan", phone: "0302-4455667", area: "Sialkot / Daska", commissionRate: "3" },
-    { name: "Bilal Ahmed", phone: "0303-7788990", area: "Lahore", commissionRate: "2" },
+    { companyId: comp.id, branchId: ho.id, name: "Rashid Mehmood", phone: "0301-1112233", area: "Gujranwala City", commissionRate: "2.5" },
+    { companyId: comp.id, branchId: ho.id, name: "Imran Khan", phone: "0302-4455667", area: "Sialkot / Daska", commissionRate: "3" },
+    { companyId: comp.id, branchId: ho.id, name: "Bilal Ahmed", phone: "0303-7788990", area: "Lahore", commissionRate: "2" },
   ]).returning();
 
-  // Customers (with PK tax profiles)
   const custData = [
     { name: "Haji Traders", city: "Gujranwala", area: "Model Town", phone: "055-1111111", mobile: "0300-1111111", openingBalance: "125000", creditLimit: "500000", salesmanId: smRows[0].id, ntn: "2345678-1", strn: "3277876111001", cnic: "34101-1234567-8", filerStatus: "filer", salesTaxRegistered: true, province: "Punjab" },
     { name: "City Sanitary Store", city: "Sialkot", area: "Commissioner Road", phone: "052-2222222", mobile: "0300-2222222", openingBalance: "85000", creditLimit: "300000", salesmanId: smRows[1].id, ntn: "3456789-2", strn: "", cnic: "34202-7654321-9", filerStatus: "late_filer", salesTaxRegistered: false, province: "Punjab" },
@@ -148,9 +165,8 @@ async function runSeed() {
   for (const c of custData) {
     const r = await db.insert(parties).values({
       type: "customer", name: c.name, city: c.city, area: c.area, phone: c.phone, mobile: c.mobile,
-      openingBalance: c.openingBalance, creditLimit: c.creditLimit,
-      salesmanId: c.salesmanId, companyId: company.id,
-      cnic: c.cnic || null, ntn: c.ntn || null, strn: c.strn || null,
+      openingBalance: c.openingBalance, creditLimit: c.creditLimit, salesmanId: c.salesmanId,
+      companyId: comp.id, cnic: c.cnic || null, ntn: c.ntn || null, strn: c.strn || null,
       filerStatus: c.filerStatus, salesTaxRegistered: c.salesTaxRegistered, province: c.province,
     }).returning();
     custRows.push(r[0]);
@@ -161,22 +177,14 @@ async function runSeed() {
     { partyId: custRows[0].id, siteName: "Shop Godown", address: "Model Town Godown", contactPerson: "Haji Sahab", contactNumber: "0300-1111111", creditLimit: "200000" },
   ]);
 
-  // Vendors
   const vendData = [
     { name: "Pak Ceramics (Pvt) Ltd", city: "Karachi", area: "SITE", phone: "021-5555555", openingBalance: "320000", creditLimit: "1500000", ntn: "5678901-4", filerStatus: "filer", salesTaxRegistered: true },
     { name: "China Import - Guangzhou Li", city: "Guangzhou", area: "Import", phone: "+86-200000000", openingBalance: "0", creditLimit: "5000000", ntn: "", filerStatus: "non_filer", salesTaxRegistered: false },
     { name: "Lahore Brass Works", city: "Lahore", area: "Badami Bagh", phone: "042-6666666", openingBalance: "95000", creditLimit: "800000", ntn: "6789012-5", filerStatus: "filer", salesTaxRegistered: true },
     { name: "Steelline Accessories", city: "Karachi", area: "Korangi", phone: "021-7777777", openingBalance: "45000", creditLimit: "400000", ntn: "7890123-6", filerStatus: "late_filer", salesTaxRegistered: false },
   ];
-  for (const v of vendData) {
-    await db.insert(parties).values({
-      type: "vendor", name: v.name, city: v.city, area: v.area, phone: v.phone,
-      openingBalance: v.openingBalance, creditLimit: v.creditLimit, companyId: company.id,
-      ntn: v.ntn || null, filerStatus: v.filerStatus, salesTaxRegistered: v.salesTaxRegistered,
-    });
-  }
+  for (const v of vendData) await db.insert(parties).values({ type: "vendor", name: v.name, city: v.city, area: v.area, phone: v.phone, openingBalance: v.openingBalance, creditLimit: v.creditLimit, companyId: comp.id, ntn: v.ntn || null, filerStatus: v.filerStatus, salesTaxRegistered: v.salesTaxRegistered });
 
-  // 12-item catalog (with HS/PCT headings for FBR invoices)
   const catalog = [
     { code: "SAN-001", barcode: "100001", name: "Commode - One Piece Deluxe", category: "Sanitary Ware", brand: "PakCeram", model: "OP-200", unit: "PCS", size: '26"x14"', color: "White", design: "Modern", origin: "Local", featured: true, costPrice: "14500", salePrice: "18500", reorderLevel: "4", openingStock: "25", hsCode: "6910.1000" },
     { code: "SAN-002", barcode: "100002", name: "Wall Hung Basin with Pedestal", category: "Sanitary Ware", brand: "PakCeram", model: "WB-110", unit: "PCS", size: '22"x18"', color: "Ivory", design: "Classic", origin: "Local", featured: true, costPrice: "6800", salePrice: "9200", reorderLevel: "6", openingStock: "40", hsCode: "6910.1000" },
@@ -191,46 +199,20 @@ async function runSeed() {
     { code: "ACC-002", barcode: "400002", name: "Waste Coupling + Bottle Trap Set", category: "Accessories", brand: "Steelline", model: "WT-01", unit: "SET", size: '1-1/4"', color: "Chrome", design: "Standard", origin: "Local", featured: false, costPrice: "890", salePrice: "1350", reorderLevel: "25", openingStock: "180", hsCode: "7324.9000" },
     { code: "ACC-003", barcode: "400003", name: "Imported Towel Rail + Shelf - Black", category: "Accessories", brand: "EuroBath", model: "TR-BLK", unit: "SET", size: '24"', color: "Matte Black", design: "Minimal", origin: "Imported", featured: false, costPrice: "3400", salePrice: "4950", reorderLevel: "5", openingStock: "3", hsCode: "7324.9000" },
   ];
-  for (const it of catalog) {
-    await db.insert(items).values({ ...it, warehouseId: mainWh.id } as never);
-  }
+  for (const it of catalog) await db.insert(items).values({ ...it, companyId: comp.id, warehouseId: mainWh.id } as never);
 
-  // Users
-  const adminRows = await db.insert(users).values({
-    username: "admin", passwordHash: hashPassword("admin123"),
-    fullName: "Administrator", role: "admin", companyId: company.id,
-  }).returning();
-  const cashierRows = await db.insert(users).values({
-    username: "cashier", passwordHash: hashPassword("cash123"),
-    fullName: "Counter Cashier", role: "cashier", companyId: company.id,
-  }).returning();
-
-  // Cashier permissions: view dashboard, customers, items, sales, pos + create/edit on pos & sales
+  const admin = (await db.insert(users).values({ username: "admin", passwordHash: hashPassword("admin123"), fullName: "Administrator", role: "admin", companyId: comp.id }).returning())[0];
+  const cashier = (await db.insert(users).values({ username: "cashier", passwordHash: hashPassword("cash123"), fullName: "Counter Cashier", role: "cashier", companyId: comp.id, branchId: ho.id }).returning())[0];
   const menuDefaults: Record<string, { v: boolean; c: boolean; e: boolean }> = {
-    dashboard: { v: true, c: false, e: false },
-    customers: { v: true, c: true, e: true },
-    items: { v: true, c: false, e: false },
-    sales: { v: true, c: true, e: false },
-    pos: { v: true, c: true, e: true },
-    stock: { v: true, c: false, e: false },
+    dashboard: { v: true, c: false, e: false }, customers: { v: true, c: true, e: true },
+    items: { v: true, c: false, e: false }, sales: { v: true, c: true, e: false },
+    pos: { v: true, c: true, e: true }, stock: { v: true, c: false, e: false },
   };
-  for (const [menuKey, p] of Object.entries(menuDefaults)) {
-    await db.insert(permissions).values({
-      userId: cashierRows[0].id, menuKey,
-      canView: p.v, canCreate: p.c, canEdit: p.e, canDelete: false, canPrint: true, canExport: false,
-    });
-  }
-  void adminRows;
+  for (const [menuKey, p] of Object.entries(menuDefaults)) await db.insert(permissions).values({ userId: cashier.id, menuKey, canView: p.v, canCreate: p.c, canEdit: p.e, canDelete: false, canPrint: true, canExport: false });
 
-  // Letterhead
   await db.insert(letterheads).values({
-    companyId: company.id,
-    name: "Standard",
+    companyId: comp.id, branchId: ho.id, name: "Standard",
     headerText: "AL-NOOR SANITARY & TILES\nMain G.T. Road, Gujranwala | 055-1234567 | info@alnoorsanitory.pk\nNTN: 1234567-8 | STRN: 3277876123456",
-    footerText: "Thank you for your business! | Goods once sold will not be returned without receipt within 7 days.",
-    isDefault: true,
+    footerText: "Thank you for your business! | Goods once sold will not be returned without receipt within 7 days.", isDefault: true,
   });
-
-  // Tax + FBR defaults
-  await ensureTaxSeed();
 }

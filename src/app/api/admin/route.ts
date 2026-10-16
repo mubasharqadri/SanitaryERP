@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { users, permissions, salesmen, letterheads, companies, currencies, warehouses, auditLog, incentives } from "@/db/schema";
+import { users, permissions, salesmen, letterheads, companies, currencies, warehouses, branches, auditLog, incentives } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getSessionUser, hashPassword, MENU_KEYS } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
@@ -13,13 +13,19 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const entity = url.searchParams.get("entity") ?? "users";
   if (entity === "users") {
-    const rows = await db.select({ id: users.id, username: users.username, fullName: users.fullName, role: users.role, companyId: users.companyId, picture: users.picture, active: users.active, createdAt: users.createdAt }).from(users);
+    const rows = await db.select({ id: users.id, username: users.username, fullName: users.fullName, role: users.role, companyId: users.companyId, branchId: users.branchId, picture: users.picture, active: users.active, createdAt: users.createdAt }).from(users);
     return NextResponse.json({ rows, menuKeys: [...MENU_KEYS] });
   }
   if (entity === "permissions") {
     const uid = url.searchParams.get("userId");
     const rows = await db.select().from(permissions).where(uid ? eq(permissions.userId, Number(uid)) : undefined);
     return NextResponse.json({ rows, menuKeys: [...MENU_KEYS] });
+  }
+  if (entity === "branches") {
+    if (user.role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
+    const cid = url.searchParams.get("companyId");
+    const rows = await db.select().from(branches).where(cid ? eq(branches.companyId, Number(cid)) : undefined).orderBy(branches.companyId, branches.name);
+    return NextResponse.json({ rows });
   }
   if (entity === "salesmen") return NextResponse.json({ rows: await db.select().from(salesmen).orderBy(salesmen.name) });
   if (entity === "letterheads") return NextResponse.json({ rows: await db.select().from(letterheads) });
@@ -46,7 +52,7 @@ export async function POST(req: Request) {
       const rows = await db.insert(users).values({
         username: d.username, passwordHash: hashPassword(d.password || "123456"),
         fullName: d.fullName || d.username, role: d.role || "user",
-        companyId: d.companyId ? Number(d.companyId) : null, active: d.active ?? true,
+        companyId: d.companyId ? Number(d.companyId) : null, branchId: d.branchId ? Number(d.branchId) : null, active: d.active ?? true,
       }).returning();
       await audit(user.id, user.username, "create", "users", String(rows[0].id), { username: d.username });
       return NextResponse.json({ row: { ...rows[0], passwordHash: undefined } });
@@ -68,6 +74,11 @@ export async function POST(req: Request) {
     if (found) await db.update(permissions).set(vals).where(eq(permissions.id, found.id));
     else await db.insert(permissions).values({ userId: Number(userId), menuKey, ...vals });
     return NextResponse.json({ ok: true });
+  }
+  if (entity === "branches") {
+    const rows = await db.insert(branches).values({ companyId: Number(d.companyId), code: d.code, name: d.name, address: d.address || null, phone: d.phone || null, isHeadOffice: !!d.isHeadOffice, active: d.active ?? true }).returning();
+    await audit(user.id, user.username, "create", "branches", String(rows[0].id), rows[0]);
+    return NextResponse.json({ row: rows[0] });
   }
   if (entity === "salesmen") {
     const rows = await db.insert(salesmen).values({ name: d.name, phone: d.phone || null, area: d.area || null, commissionRate: String(d.commissionRate ?? 0), active: d.active ?? true, pictures: d.pictures || null, documents: d.documents || null }).returning();
@@ -113,9 +124,15 @@ export async function PUT(req: Request) {
       ...(d.picture !== undefined ? { picture: d.picture || null } : {}),
       ...(d.password ? { passwordHash: hashPassword(d.password) } : {}),
       companyId: d.companyId === null || d.companyId === "" ? null : (d.companyId ? Number(d.companyId) : undefined),
+      branchId: d.branchId === null || d.branchId === "" ? null : (d.branchId ? Number(d.branchId) : undefined),
       updatedAt: new Date(),
     }).where(eq(users.id, id));
     await audit(user.id, user.username, "update", "users", String(id), { username: d.username });
+    return NextResponse.json({ ok: true });
+  }
+  if (entity === "branches") {
+    await db.update(branches).set({ companyId: d.companyId ? Number(d.companyId) : undefined, code: d.code, name: d.name, address: d.address, phone: d.phone, isHeadOffice: d.isHeadOffice, active: d.active, updatedAt: new Date() }).where(eq(branches.id, id));
+    await audit(user.id, user.username, "update", "branches", String(id), d);
     return NextResponse.json({ ok: true });
   }
   if (entity === "salesmen") {
@@ -151,6 +168,7 @@ export async function DELETE(req: Request) {
   const entity = url.searchParams.get("entity") ?? "";
   const id = Number(url.searchParams.get("id"));
   if (entity === "users") { await db.delete(users).where(eq(users.id, id)); await audit(user.id, user.username, "delete", "users", String(id), {}); }
+  else if (entity === "branches") await db.delete(branches).where(eq(branches.id, id));
   else if (entity === "salesmen") await db.delete(salesmen).where(eq(salesmen.id, id));
   else if (entity === "letterheads") await db.delete(letterheads).where(eq(letterheads.id, id));
   else if (entity === "companies") await db.delete(companies).where(eq(companies.id, id));

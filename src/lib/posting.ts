@@ -171,7 +171,9 @@ export async function postStock(
   warehouseId: number | null,
   lines: Array<{ itemId?: number | null; qty: number; rate: number; returnCondition?: string }>,
   direction: "in" | "out" | "none",
-  narration: string
+  narration: string,
+  companyId: number | null = null,
+  branchId: number | null = null
 ) {
   if (direction === "none") return;
   for (const l of lines) {
@@ -187,6 +189,8 @@ export async function postStock(
       date: dateStr,
       itemId: l.itemId,
       warehouseId,
+      companyId,
+      branchId,
       qtyIn: finalQtyIn,
       qtyOut: direction === "out" ? String(l.qty) : "0",
       rate: String(l.rate),
@@ -203,9 +207,10 @@ export async function postFinancialVoucher(opts: {
   docId: number; docType: string; docNo: string; date: string; partyId: number | null;
   grandTotal: number; paidAmount: number; paymentMode: string; salesTax: number;
   furtherTax?: number; aitAmount?: number;
-  createdBy: number | null; companyId: number | null; currencyId: number | null;
+  createdBy: number | null; companyId: number | null; branchId?: number | null; currencyId: number | null;
 }) {
   const { docId, docType, docNo, date, partyId, grandTotal, createdBy, companyId, currencyId } = opts;
+  const branchId = opts.branchId ?? null;
   const paid = num(opts.paidAmount);
   const st = num(opts.salesTax);
   const ft = num(opts.furtherTax);
@@ -238,7 +243,7 @@ export async function postFinancialVoucher(opts: {
     const av = await db.insert(vouchers).values({
       voucherType: "JV", voucherNo: aNo, date,
       narration: `Inventory adjustment ${docNo}`,
-      partyId, documentId: docId, companyId, currencyId, createdBy,
+      partyId, documentId: docId, companyId, branchId, currencyId, createdBy,
       totalDebit: String(grandTotal), totalCredit: String(grandTotal),
     }).returning();
     await db.insert(voucherLines).values([
@@ -255,7 +260,7 @@ export async function postFinancialVoucher(opts: {
   const vRows = await db.insert(vouchers).values({
     voucherType: vType, voucherNo: vNo, date,
     narration: `Auto-post ${docType} ${docNo}`,
-    partyId, documentId: docId, companyId, currencyId, createdBy,
+    partyId, documentId: docId, companyId, branchId, currencyId, createdBy,
     totalDebit: String(grandTotal), totalCredit: String(grandTotal),
   }).returning();
   const vId = vRows[0].id;
@@ -293,7 +298,7 @@ export async function postFinancialVoucher(opts: {
     const wv = await db.insert(vouchers).values({
       voucherType: "JV", voucherNo: wNo, date,
       narration: `AIT u/s 153 withholding on ${docNo}`,
-      partyId, documentId: docId, companyId, currencyId, createdBy,
+      partyId, documentId: docId, companyId, branchId, currencyId, createdBy,
       totalDebit: String(ait), totalCredit: String(ait),
     }).returning();
     if (isSale && aitRecvId) {
@@ -327,7 +332,7 @@ export async function postFinancialVoucher(opts: {
     const pv = await db.insert(vouchers).values({
       voucherType: pvType, voucherNo: pvNo, date,
       narration: `Payment ${opts.paymentMode} against ${docNo}`,
-      partyId, documentId: docId, companyId, currencyId, createdBy,
+      partyId, documentId: docId, companyId, branchId, currencyId, createdBy,
       totalDebit: String(paid), totalCredit: String(paid),
     }).returning();
     if (isSale) {

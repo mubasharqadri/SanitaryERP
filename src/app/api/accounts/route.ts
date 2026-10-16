@@ -6,6 +6,7 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
 import { num } from "@/lib/utils";
 import { audit } from "@/lib/posting";
+import { scopedWhere, resolveWriteScope, type ScopedUser } from "@/lib/scope";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -15,10 +16,13 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
+  const masterScope = scopedWhere(user as ScopedUser, accounts.companyId, accounts.branchId, { allowCompanyWide: true });
+  const voucherScope = scopedWhere(user as ScopedUser, vouchers.companyId, vouchers.branchId, { branchOperational: true });
 
-  const rows = await db.select().from(accounts).orderBy(accounts.code);
+  const rows = await db.select().from(accounts).where(masterScope).orderBy(accounts.code);
 
   const conds = [eq(vouchers.status, "Posted")];
+  if (voucherScope) conds.push(voucherScope);
   if (from) conds.push(gte(vouchers.date, from));
   if (to) conds.push(lte(vouchers.date, to));
 
@@ -51,9 +55,13 @@ export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json();
+  let writeScope;
+  try { writeScope = await resolveWriteScope(user as ScopedUser, body.companyId ? Number(body.companyId) : undefined, body.branchId ? Number(body.branchId) : undefined); }
+  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid company/branch" }, { status: 400 }); }
   try {
     const rows = await db.insert(accounts).values({
       code: body.code, name: body.name, type: body.type,
+      companyId: writeScope.companyId, branchId: writeScope.branchId,
       parentId: body.parentId ? Number(body.parentId) : null,
       openingDebit: String(body.openingDebit ?? 0), openingCredit: String(body.openingCredit ?? 0),
       prevYearDebit: String(body.prevYearDebit ?? 0), prevYearCredit: String(body.prevYearCredit ?? 0),

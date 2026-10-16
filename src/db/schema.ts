@@ -58,6 +58,27 @@ export const companies = pgTable(
   (t) => [index("companies_currency_idx").on(t.baseCurrencyId)]
 );
 
+/* ============ Branches / locations ============ */
+export const branches = pgTable(
+  "branches",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    code: varchar("code", { length: 30 }).notNull(),
+    name: varchar("name", { length: 140 }).notNull(),
+    address: text("address"),
+    phone: varchar("phone", { length: 40 }),
+    isHeadOffice: boolean("is_head_office").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("branches_company_idx").on(t.companyId),
+    unique("branches_company_code_uq").on(t.companyId, t.code),
+  ]
+);
+
 /* ============ Users ============ */
 export const users = pgTable(
   "users",
@@ -68,6 +89,7 @@ export const users = pgTable(
     fullName: varchar("full_name", { length: 120 }).notNull(),
     role: varchar("role", { length: 20 }).notNull().default("user"),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     picture: text("picture"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -77,6 +99,7 @@ export const users = pgTable(
   (t) => [
     uniqueIndex("users_username_uidx").on(t.username),
     index("users_company_idx").on(t.companyId),
+    index("users_branch_idx").on(t.branchId),
     check("users_role_chk", sql`${t.role} in ('admin','manager','cashier','user')`),
   ]
 );
@@ -115,6 +138,8 @@ export const salesmen = pgTable(
     phone: varchar("phone", { length: 40 }),
     area: varchar("area", { length: 120 }),
     commissionRate: numeric("commission_rate", { precision: 8, scale: 3 }).notNull().default("0"),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     active: boolean("active").notNull().default(true),
     // Multiple images per salesman: face photo, CNIC front, CNIC back, resume, etc.
     pictures: text("pictures"),
@@ -142,6 +167,8 @@ export const accounts = pgTable(
     openingCredit: numeric("opening_credit", { precision: 14, scale: 2 }).notNull().default("0"),
     prevYearDebit: numeric("prev_year_debit", { precision: 14, scale: 2 }).notNull().default("0"),
     prevYearCredit: numeric("prev_year_credit", { precision: 14, scale: 2 }).notNull().default("0"),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "cascade" }),
     isSystem: boolean("is_system").notNull().default(false),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -150,6 +177,8 @@ export const accounts = pgTable(
   },
   (t) => [
     uniqueIndex("accounts_code_uidx").on(t.code),
+    index("accounts_company_idx").on(t.companyId),
+    index("accounts_branch_idx").on(t.branchId),
     index("accounts_type_idx").on(t.type),
     index("accounts_parent_idx").on(t.parentId),
     check("accounts_type_chk", sql`${t.type} in ('Asset','Liability','Equity','Income','Expense')`),
@@ -164,6 +193,7 @@ export const warehouses = pgTable(
   {
     id: serial("id").primaryKey(),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     code: varchar("code", { length: 20 }).notNull(),
     name: varchar("name", { length: 120 }).notNull(),
     address: text("address"),
@@ -199,6 +229,7 @@ export const parties = pgTable(
     creditLimit: numeric("credit_limit", { precision: 14, scale: 2 }).notNull().default("0"),
     salesmanId: integer("salesman_id").references(() => salesmen.id, { onDelete: "set null" }),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     active: boolean("active").notNull().default(true),
     contactPic: text("contact_pic"),
     documents: text("documents"),
@@ -269,6 +300,8 @@ export const items = pgTable(
     taxClass: varchar("tax_class", { length: 20 }).notNull().default("standard"),
     taxRate: numeric("tax_rate", { precision: 8, scale: 3 }).notNull().default("18"),
     warehouseId: integer("warehouse_id").references(() => warehouses.id, { onDelete: "set null" }),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "cascade" }),
     active: boolean("active").notNull().default(true),
     documents: text("documents"),
     // Multiple product photos (comma-separated URLs) — several angles per item for the storefront
@@ -362,6 +395,7 @@ export const documents = pgTable(
     walkinAddress: text("walkin_address"),
     walkinCity: varchar("walkin_city", { length: 80 }),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -439,6 +473,7 @@ export const vouchers = pgTable(
     partyId: integer("party_id").references(() => parties.id, { onDelete: "set null" }),
     documentId: integer("document_id").references(() => documents.id, { onDelete: "set null" }),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     currencyId: integer("currency_id").references(() => currencies.id, { onDelete: "set null" }),
     createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
     totalDebit: numeric("total_debit", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -454,6 +489,8 @@ export const vouchers = pgTable(
     index("vouchers_type_idx").on(t.voucherType),
     index("vouchers_date_idx").on(t.date),
     index("vouchers_party_idx").on(t.partyId),
+    index("vouchers_company_idx").on(t.companyId),
+    index("vouchers_branch_idx").on(t.branchId),
     index("vouchers_doc_idx").on(t.documentId),
     check(
       "vouchers_type_chk",
@@ -499,6 +536,8 @@ export const stockLedger = pgTable(
     date: date("date").notNull(),
     itemId: integer("item_id").references(() => items.id, { onDelete: "restrict" }),
     warehouseId: integer("warehouse_id").references(() => warehouses.id, { onDelete: "set null" }),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     qtyIn: numeric("qty_in", { precision: 14, scale: 2 }).notNull().default("0"),
     qtyOut: numeric("qty_out", { precision: 14, scale: 2 }).notNull().default("0"),
     rate: numeric("rate", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -529,6 +568,8 @@ export const incentives = pgTable(
     id: serial("id").primaryKey(),
     date: date("date").notNull(),
     kind: varchar("kind", { length: 20 }).notNull(),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     partyId: integer("party_id").references(() => parties.id, { onDelete: "set null" }),
     documentId: integer("document_id").references(() => documents.id, { onDelete: "set null" }),
     amount: numeric("amount", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -549,6 +590,7 @@ export const letterheads = pgTable(
   {
     id: serial("id").primaryKey(),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 120 }).notNull(),
     headerText: text("header_text"),
     footerText: text("footer_text"),
@@ -558,7 +600,7 @@ export const letterheads = pgTable(
     isDefault: boolean("is_default").notNull().default(false),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
-  (t) => [index("letterheads_company_idx").on(t.companyId)]
+  (t) => [index("letterheads_company_idx").on(t.companyId), index("letterheads_branch_idx").on(t.branchId)]
 );
 
 /* ============ PK Tax settings (single row, id=1) ============ */
@@ -597,6 +639,7 @@ export const fbrSettings = pgTable(
   {
     id: serial("id").primaryKey(),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     businessName: varchar("business_name", { length: 160 }),
     ntn: varchar("ntn", { length: 40 }),
     strn: varchar("strn", { length: 40 }),
@@ -613,6 +656,7 @@ export const fbrSettings = pgTable(
   },
   (t) => [
     index("fbr_settings_company_idx").on(t.companyId),
+    index("fbr_settings_branch_idx").on(t.branchId),
     check("fbr_env_chk", sql`${t.environment} in ('sandbox','production')`),
   ]
 );
@@ -644,6 +688,8 @@ export const auditLog = pgTable(
   {
     id: serial("id").primaryKey(),
     userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     username: varchar("username", { length: 60 }),
     action: varchar("action", { length: 30 }).notNull(),
     tableName: varchar("table_name", { length: 60 }),

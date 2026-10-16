@@ -7,7 +7,18 @@ import { eq, and } from "drizzle-orm";
 const COOKIE = "erp_session";
 const SECRET = process.env.SESSION_SECRET || "sanitary-erp-dev-secret-change-me";
 
-export type SessionUser = { id: number; username: string; fullName: string; role: string };
+export type SessionUser = {
+  id: number;
+  username: string;
+  fullName: string;
+  role: string;
+  picture?: string | null;
+  companyId?: number | null;
+  branchId?: number | null;
+  companyName?: string | null;
+  branchName?: string | null;
+  allBranches?: boolean;
+};
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
