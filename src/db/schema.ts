@@ -168,7 +168,7 @@ export const accounts = pgTable(
     prevYearDebit: numeric("prev_year_debit", { precision: 14, scale: 2 }).notNull().default("0"),
     prevYearCredit: numeric("prev_year_credit", { precision: 14, scale: 2 }).notNull().default("0"),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
-    branchId: integer("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     isSystem: boolean("is_system").notNull().default(false),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -301,7 +301,7 @@ export const items = pgTable(
     taxRate: numeric("tax_rate", { precision: 8, scale: 3 }).notNull().default("18"),
     warehouseId: integer("warehouse_id").references(() => warehouses.id, { onDelete: "set null" }),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
-    branchId: integer("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     active: boolean("active").notNull().default(true),
     documents: text("documents"),
     // Multiple product photos (comma-separated URLs) — several angles per item for the storefront
@@ -590,7 +590,7 @@ export const letterheads = pgTable(
   {
     id: serial("id").primaryKey(),
     companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
-    branchId: integer("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     name: varchar("name", { length: 120 }).notNull(),
     headerText: text("header_text"),
     footerText: text("footer_text"),

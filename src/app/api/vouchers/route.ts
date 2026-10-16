@@ -134,8 +134,11 @@ export async function DELETE(req: Request) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const url = new URL(req.url);
   const id = Number(url.searchParams.get("id"));
+  const scope = scopedWhere(user as ScopedUser, vouchers.companyId, vouchers.branchId, { branchOperational: true });
+  const existing = await db.select({ id: vouchers.id }).from(vouchers).where(and(eq(vouchers.id, id), scope)).limit(1);
+  if (!existing[0]) return NextResponse.json({ error: "Voucher not found in your selected company/branch" }, { status: 404 });
   await db.delete(voucherLines).where(eq(voucherLines.voucherId, id));
-  await db.delete(vouchers).where(eq(vouchers.id, id));
+  await db.delete(vouchers).where(and(eq(vouchers.id, id), scope));
   await audit(user.id, user.username, "delete", "vouchers", String(id), {});
   return NextResponse.json({ ok: true });
 }

@@ -57,6 +57,7 @@ const NAV: Array<{ section: string; links: NavLink[] }> = [
       { href: "/settings/salesmen", icon: "🧑‍💼", label: "Salesmen" },
       { href: "/settings/letterheads", icon: "🧾", label: "Letterheads" },
       { href: "/settings/companies", icon: "🏢", label: "Companies" },
+      { href: "/settings/branches", icon: "🏬", label: "Branches" },
       { href: "/settings/currencies", icon: "💱", label: "Currencies" },
       { href: "/settings/data-upload", icon: "📤", label: "Data Upload" },
       { href: "/settings/backup", icon: "💾", label: "Backup" },

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { documents, items, parties, stockLedger, vouchers } from "@/db/schema";
-import { eq, gte, sql } from "drizzle-orm";
+import { eq, gte, sql, and } from "drizzle-orm";
 import { getSessionUser } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
 import { num, todayISO } from "@/lib/utils";
 import { stockMap } from "@/app/api/items/route";
+import { scopedWhere, type ScopedUser } from "@/lib/scope";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -13,28 +14,33 @@ export async function GET() {
   await ensureSeed();
   const today = todayISO();
   const monthStart = today.slice(0, 7) + "-01";
+  const su = user as ScopedUser;
+  const dScope = scopedWhere(su, documents.companyId, documents.branchId, { branchOperational: true });
+  const vScope = scopedWhere(su, vouchers.companyId, vouchers.branchId, { branchOperational: true });
+  const pScope = scopedWhere(su, parties.companyId, parties.branchId, { allowCompanyWide: true });
+  const iScope = scopedWhere(su, items.companyId, items.branchId, { allowCompanyWide: true });
 
   const salesToday = await db.select({ t: sql<string>`coalesce(sum(${documents.grandTotal}),0)` }).from(documents)
-    .where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} = ${today} and ${documents.status} != 'Cancelled'`);
+    .where(and(dScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} = ${today} and ${documents.status} != 'Cancelled'`));
   const salesMonth = await db.select({ t: sql<string>`coalesce(sum(${documents.grandTotal}),0)` }).from(documents)
-    .where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`);
+    .where(and(dScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`));
   const purchMonth = await db.select({ t: sql<string>`coalesce(sum(${documents.grandTotal}),0)` }).from(documents)
-    .where(sql`${documents.docType} = 'PINV' and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`);
+    .where(and(dScope, sql`${documents.docType} = 'PINV' and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`));
   const recvMonth = await db.select({ t: sql<string>`coalesce(sum(${vouchers.totalCredit}),0)` }).from(vouchers)
-    .where(sql`(${vouchers.voucherType} = 'CRV' or ${vouchers.voucherType} = 'BRV') and ${vouchers.date} >= ${monthStart} and ${vouchers.status} != 'Cancelled'`);
+    .where(and(vScope, sql`(${vouchers.voucherType} = 'CRV' or ${vouchers.voucherType} = 'BRV') and ${vouchers.date} >= ${monthStart} and ${vouchers.status} != 'Cancelled'`));
   const payMonth = await db.select({ t: sql<string>`coalesce(sum(${vouchers.totalDebit}),0)` }).from(vouchers)
-    .where(sql`(${vouchers.voucherType} = 'CPV' or ${vouchers.voucherType} = 'BPV') and ${vouchers.date} >= ${monthStart} and ${vouchers.status} != 'Cancelled'`);
+    .where(and(vScope, sql`(${vouchers.voucherType} = 'CPV' or ${vouchers.voucherType} = 'BPV') and ${vouchers.date} >= ${monthStart} and ${vouchers.status} != 'Cancelled'`));
 
-  const countItems = await db.select({ c: sql<number>`count(*)` }).from(items);
-  const countCust = await db.select({ c: sql<number>`count(*)` }).from(parties).where(eq(parties.type, "customer"));
-  const countVend = await db.select({ c: sql<number>`count(*)` }).from(parties).where(eq(parties.type, "vendor"));
+  const countItems = await db.select({ c: sql<number>`count(*)` }).from(items).where(iScope);
+  const countCust = await db.select({ c: sql<number>`count(*)` }).from(parties).where(and(pScope, eq(parties.type, "customer")));
+  const countVend = await db.select({ c: sql<number>`count(*)` }).from(parties).where(and(pScope, eq(parties.type, "vendor")));
 
-  const recentDocs = await db.select().from(documents).orderBy(sql`${documents.id} desc`).limit(8);
+  const recentDocs = await db.select().from(documents).where(dScope).orderBy(sql`${documents.id} desc`).limit(8);
 
   // receivables / payables
-  const allDocs = await db.select().from(documents).where(sql`${documents.status} != 'Cancelled'`);
-  const allV = await db.select().from(vouchers).where(sql`${vouchers.status} != 'Cancelled'`);
-  const allP = await db.select().from(parties);
+  const allDocs = await db.select().from(documents).where(and(dScope, sql`${documents.status} != 'Cancelled'`));
+  const allV = await db.select().from(vouchers).where(and(vScope, sql`${vouchers.status} != 'Cancelled'`));
+  const allP = await db.select().from(parties).where(pScope);
   let receivables = 0, payables = 0;
   const openMap: Record<number, number> = {};
   for (const p of allP) openMap[p.id] = num(p.openingBalance);
@@ -56,8 +62,8 @@ export async function GET() {
   }
 
   // reorder alarms
-  const sm = await stockMap();
-  const allItems = await db.select().from(items);
+  const sm = await stockMap(su);
+  const allItems = await db.select().from(items).where(iScope);
   const alarms = allItems
     .filter((it) => (sm[it.id]?.stock ?? 0) <= num(it.reorderLevel))
     .map((it) => ({ id: it.id, code: it.code, name: it.name, stock: Math.round((sm[it.id]?.stock ?? 0) * 100) / 100, reorderLevel: num(it.reorderLevel) }))
@@ -70,27 +76,27 @@ export async function GET() {
     d.setDate(d.getDate() - i);
     const iso = d.toISOString().slice(0, 10);
     const r = await db.select({ t: sql<string>`coalesce(sum(${documents.grandTotal}),0)` }).from(documents)
-      .where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} = ${iso} and ${documents.status} != 'Cancelled'`);
+      .where(and(dScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} = ${iso} and ${documents.status} != 'Cancelled'`));
     trend.push({ date: iso.slice(5), total: num(r[0]?.t) });
   }
 
   // payment mode breakdown today
   const modes = await db.select({ m: documents.paymentMode, t: sql<string>`coalesce(sum(${documents.grandTotal}),0)` }).from(documents)
-    .where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`).groupBy(documents.paymentMode);
+    .where(and(dScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`)).groupBy(documents.paymentMode);
 
   void gte; void stockLedger;
 
   // PK tax + FBR snapshot (this month)
   const outTax = await db.select({ t: sql<string>`coalesce(sum(${documents.salesTax}),0)` }).from(documents)
-    .where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`);
+    .where(and(dScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`));
   const inTax = await db.select({ t: sql<string>`coalesce(sum(${documents.salesTax}),0)` }).from(documents)
-    .where(sql`${documents.docType} = 'PINV' and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`);
+    .where(and(dScope, sql`${documents.docType} = 'PINV' and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`));
   const ftOut = await db.select({ t: sql<string>`coalesce(sum(${documents.furtherTax}),0)` }).from(documents)
-    .where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`);
+    .where(and(dScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${monthStart} and ${documents.status} != 'Cancelled'`));
   const fbrPend = await db.select({ c: sql<number>`count(*)` }).from(documents)
-    .where(sql`${documents.docType} in ('SINV','POS','SRET') and ${documents.fbrStatus} in ('not_synced','failed','queued')`);
+    .where(and(dScope, sql`${documents.docType} in ('SINV','POS','SRET') and ${documents.fbrStatus} in ('not_synced','failed','queued')`));
   const fbrSynced = await db.select({ c: sql<number>`count(*)` }).from(documents)
-    .where(sql`${documents.fbrStatus} = 'synced'`);
+    .where(and(dScope, sql`${documents.fbrStatus} = 'synced'`));
 
   return NextResponse.json({
     salesToday: num(salesToday[0]?.t), salesMonth: num(salesMonth[0]?.t),

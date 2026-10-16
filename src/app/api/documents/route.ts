@@ -420,7 +420,9 @@ export async function DELETE(req: Request) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const url = new URL(req.url);
   const id = Number(url.searchParams.get("id"));
-  const rows = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+  const deleteScope = scopedWhere(user as ScopedUser, documents.companyId, documents.branchId, { branchOperational: true });
+  const rows = await db.select().from(documents).where(and(eq(documents.id, id), deleteScope)).limit(1);
+  if (!rows[0]) return NextResponse.json({ error: "Document not found in your selected company/branch" }, { status: 404 });
   if (rows[0]?.fbrStatus === "synced") {
     return NextResponse.json({ error: "FBR-synced invoice cannot be deleted (fiscal record). Issue a Sales Return (credit note) instead." }, { status: 400 });
   }

@@ -80,6 +80,10 @@ export async function PUT(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json();
+  const id = Number(body.id);
+  const rowScope = scopedWhere(user as ScopedUser, accounts.companyId, accounts.branchId, { allowCompanyWide: true });
+  const existing = await db.select({ id: accounts.id }).from(accounts).where(and(eq(accounts.id, id), rowScope)).limit(1);
+  if (!existing[0]) return NextResponse.json({ error: "Account not found in your selected company/branch" }, { status: 404 });
   await db.update(accounts).set({
     code: body.code, name: body.name, type: body.type,
     openingDebit: body.openingDebit !== undefined ? String(body.openingDebit) : undefined,
@@ -87,7 +91,7 @@ export async function PUT(req: Request) {
     prevYearDebit: body.prevYearDebit !== undefined ? String(body.prevYearDebit) : undefined,
     prevYearCredit: body.prevYearCredit !== undefined ? String(body.prevYearCredit) : undefined,
     active: body.active, updatedAt: new Date(),
-  }).where(eq(accounts.id, Number(body.id)));
+  }).where(and(eq(accounts.id, id), rowScope));
   await audit(user.id, user.username, "update", "accounts", String(body.id), body);
   return NextResponse.json({ ok: true });
 }
@@ -97,8 +101,9 @@ export async function DELETE(req: Request) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const url = new URL(req.url);
   const id = Number(url.searchParams.get("id"));
+  const rowScope = scopedWhere(user as ScopedUser, accounts.companyId, accounts.branchId, { allowCompanyWide: true });
   try {
-    await db.delete(accounts).where(eq(accounts.id, id));
+    await db.delete(accounts).where(and(eq(accounts.id, id), rowScope));
   } catch {
     return NextResponse.json({ error: "Cannot delete: this account has voucher entries." }, { status: 400 });
   }

@@ -6,6 +6,7 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
 import { num, todayISO } from "@/lib/utils";
 import { stockMap } from "@/app/api/items/route";
+import { scopedWhere, type ScopedUser } from "@/lib/scope";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -15,13 +16,20 @@ export async function GET(req: Request) {
   const type = url.searchParams.get("type") ?? "sales";
   const from = url.searchParams.get("from") ?? "2000-01-01";
   const to = url.searchParams.get("to") ?? todayISO();
+  const su = user as ScopedUser;
+  const docScope = scopedWhere(su, documents.companyId, documents.branchId, { branchOperational: true });
+  const voucherScope = scopedWhere(su, vouchers.companyId, vouchers.branchId, { branchOperational: true });
+  const partyScope = scopedWhere(su, parties.companyId, parties.branchId, { allowCompanyWide: true });
+  const itemScope = scopedWhere(su, items.companyId, items.branchId, { allowCompanyWide: true });
+  const stockScope = scopedWhere(su, stockLedger.companyId, stockLedger.branchId, { branchOperational: true });
+  const accountScope = scopedWhere(su, accounts.companyId, accounts.branchId, { allowCompanyWide: true });
 
   if (type === "sales" || type === "purchases") {
     const types = type === "sales" ? ["SINV", "POS", "SRET"] : ["PINV", "PRET"];
     const docs = await db.select().from(documents)
-      .where(sql`${documents.docType} in (${sql.join(types.map((t) => sql`${t}`), sql`,`)}) and ${documents.date} >= ${from} and ${documents.date} <= ${to} and ${documents.status} != 'Cancelled'`)
+      .where(and(docScope, sql`${documents.docType} in (${sql.join(types.map((t) => sql`${t}`), sql`,`)}) and ${documents.date} >= ${from} and ${documents.date} <= ${to} and ${documents.status} != 'Cancelled'`))
       .orderBy(documents.date);
-    const allP = await db.select().from(parties);
+    const allP = await db.select().from(parties).where(partyScope);
     const pmap: Record<number, string> = {};
     for (const p of allP) pmap[p.id] = p.name;
     return NextResponse.json({ rows: docs.map((d) => ({ ...d, partyName: d.partyId ? pmap[d.partyId] ?? "#" + d.partyId : "—" })) });
@@ -35,18 +43,18 @@ export async function GET(req: Request) {
     const itemId = url.searchParams.get("itemId");
     const openingCut = url.searchParams.get("openingCut"); // movements before `from`
 
-    const all = await db.select().from(items).orderBy(items.category);
+    const all = await db.select().from(items).where(itemScope).orderBy(items.category);
     const imap: Record<number, typeof all[number]> = {};
     for (const i of all) imap[i.id] = i;
 
     const ledger = db.select().from(stockLedger);
     const scoped = itemId
-      ? ledger.where(and(eq(stockLedger.itemId, Number(itemId)), gte(stockLedger.date, from), lte(stockLedger.date, to)))
-      : ledger.where(and(gte(stockLedger.date, from), lte(stockLedger.date, to)));
+      ? ledger.where(and(stockScope, eq(stockLedger.itemId, Number(itemId)), gte(stockLedger.date, from), lte(stockLedger.date, to)))
+      : ledger.where(and(stockScope, gte(stockLedger.date, from), lte(stockLedger.date, to)));
     const periodMoves = await scoped;
 
     const openingMoves = openingCut
-      ? await db.select().from(stockLedger).where(sql`date < ${openingCut}${itemId ? sql` and item_id = ${Number(itemId)}` : sql``}`)
+      ? await db.select().from(stockLedger).where(and(stockScope, sql`${stockLedger.date} < ${openingCut}`, itemId ? eq(stockLedger.itemId, Number(itemId)) : undefined))
       : [];
 
     const openingMap: Record<number, number> = {};
@@ -94,10 +102,10 @@ export async function GET(req: Request) {
   if (type === "item-returns") {
     const itId = Number(url.searchParams.get("itemId"));
     const moves = await db.select().from(stockLedger)
-      .where(and(eq(stockLedger.itemId, itId), gte(stockLedger.date, from), lte(stockLedger.date, to), inArray(stockLedger.docType, ["SRET", "PRET"])));
+      .where(and(stockScope, eq(stockLedger.itemId, itId), gte(stockLedger.date, from), lte(stockLedger.date, to), inArray(stockLedger.docType, ["SRET", "PRET"])));
     const docIds = [...new Set(moves.map((m) => m.documentId).filter((x): x is number => !!x))];
-    const docs = docIds.length ? await db.select().from(documents).where(inArray(documents.id, docIds)) : [];
-    const allP = await db.select().from(parties);
+    const docs = docIds.length ? await db.select().from(documents).where(and(docScope, inArray(documents.id, docIds))) : [];
+    const allP = await db.select().from(parties).where(partyScope);
     const out = moves.map((m) => {
       const d = docs.find((x) => x.id === m.documentId);
       const cond = m.returnCondition ?? "normal";
@@ -113,9 +121,9 @@ export async function GET(req: Request) {
   }
 
   if (type === "aging") {
-    const allP = await db.select().from(parties).where(eq(parties.type, "customer"));
-    const docs = await db.select().from(documents).where(sql`${documents.status} != 'Cancelled'`);
-    const vchs = await db.select().from(vouchers).where(sql`${vouchers.status} != 'Cancelled'`);
+    const allP = await db.select().from(parties).where(and(partyScope, eq(parties.type, "customer")));
+    const docs = await db.select().from(documents).where(and(docScope, sql`${documents.status} != 'Cancelled'`));
+    const vchs = await db.select().from(vouchers).where(and(voucherScope, sql`${vouchers.status} != 'Cancelled'`));
     const today = new Date(todayISO());
     const rows = [];
     for (const p of allP) {
@@ -143,7 +151,7 @@ export async function GET(req: Request) {
   }
 
   if (type === "daily") {
-    const docs = await db.select().from(documents).where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${from} and ${documents.date} <= ${to} and ${documents.status} != 'Cancelled'`).orderBy(documents.date);
+    const docs = await db.select().from(documents).where(and(docScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${from} and ${documents.date} <= ${to} and ${documents.status} != 'Cancelled'`)).orderBy(documents.date);
     const byDate: Record<string, { sales: number; invoices: number; cash: number; bank: number; card: number; online: number; credit: number; cheque: number }> = {};
     for (const d of docs) {
       const k = String(d.date).slice(0, 10);
@@ -161,12 +169,12 @@ export async function GET(req: Request) {
   if (type === "daily-drill") {
     const day = url.searchParams.get("date") ?? to;
     const docs = await db.select().from(documents)
-      .where(and(eq(documents.date, day), inArray(documents.docType, ["SINV", "POS", "SRET"])))
+      .where(and(docScope, eq(documents.date, day), inArray(documents.docType, ["SINV", "POS", "SRET"])))
       .orderBy(documents.id);
     const vchs = await db.select().from(vouchers)
-      .where(and(eq(vouchers.date, day), inArray(vouchers.voucherType, ["CRV", "BRV", "CPV", "BPV"])))
+      .where(and(voucherScope, eq(vouchers.date, day), inArray(vouchers.voucherType, ["CRV", "BRV", "CPV", "BPV"])))
       .orderBy(vouchers.id);
-    const allP = await db.select().from(parties);
+    const allP = await db.select().from(parties).where(partyScope);
     const pname = (id: number | null) => (id ? allP.find((p) => p.id === id)?.name ?? "#" + id : "Walk-in");
 
     const sales = docs.map((d) => ({
@@ -198,7 +206,7 @@ export async function GET(req: Request) {
   /* ---------- General Ledger of one account (drill-down from TB / P&L / BS) ---------- */
   if (type === "account-ledger") {
     const accId = Number(url.searchParams.get("accountId"));
-    const accRows = await db.select().from(accounts).where(eq(accounts.id, accId)).limit(1);
+    const accRows = await db.select().from(accounts).where(and(eq(accounts.id, accId), accountScope)).limit(1);
     if (!accRows[0]) return NextResponse.json({ error: "Account not found" }, { status: 404 });
     const acc = accRows[0];
 
@@ -206,7 +214,7 @@ export async function GET(req: Request) {
       .select({ dr: sql<string>`coalesce(sum(${voucherLines.debit}),0)`, cr: sql<string>`coalesce(sum(${voucherLines.credit}),0)` })
       .from(voucherLines)
       .innerJoin(vouchers, eq(voucherLines.voucherId, vouchers.id))
-      .where(and(eq(voucherLines.accountId, accId), eq(vouchers.status, "Posted"), sql`${vouchers.date} < ${from}`));
+      .where(and(eq(voucherLines.accountId, accId), voucherScope, eq(vouchers.status, "Posted"), sql`${vouchers.date} < ${from}`));
     const openingDr = num(acc.openingDebit) + num(openingRows[0]?.dr);
     const openingCr = num(acc.openingCredit) + num(openingRows[0]?.cr);
 
@@ -219,7 +227,7 @@ export async function GET(req: Request) {
       })
       .from(voucherLines)
       .innerJoin(vouchers, eq(voucherLines.voucherId, vouchers.id))
-      .where(and(eq(voucherLines.accountId, accId), gte(vouchers.date, from), lte(vouchers.date, to)))
+      .where(and(eq(voucherLines.accountId, accId), voucherScope, gte(vouchers.date, from), lte(vouchers.date, to)))
       .orderBy(vouchers.date, voucherLines.id);
 
     let run = openingDr - openingCr;
@@ -240,8 +248,9 @@ export async function GET(req: Request) {
   }
 
   if (type === "commission") {
-    const sms = await db.select().from(salesmen);
-    const docs = await db.select().from(documents).where(sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${from} and ${documents.date} <= ${to} and ${documents.status} != 'Cancelled'`);
+    const smScope = scopedWhere(su, salesmen.companyId, salesmen.branchId, { allowCompanyWide: true });
+    const sms = await db.select().from(salesmen).where(smScope);
+    const docs = await db.select().from(documents).where(and(docScope, sql`${documents.docType} in ('SINV','POS') and ${documents.date} >= ${from} and ${documents.date} <= ${to} and ${documents.status} != 'Cancelled'`));
     const rows = sms.map((s) => {
       const mine = docs.filter((d) => d.salesmanId === s.id);
       const volume = mine.reduce((a, d) => a + num(d.grandTotal), 0);
@@ -254,11 +263,12 @@ export async function GET(req: Request) {
   // Master commission ledger sub-report displaying invoice-by-invoice, item-by-item commission shares
   if (type === "commission-ledger") {
     const salesmanId = Number(url.searchParams.get("salesmanId"));
-    const salesRep = await db.select().from(salesmen).where(eq(salesmen.id, salesmanId)).limit(1);
+    const smScope = scopedWhere(su, salesmen.companyId, salesmen.branchId, { allowCompanyWide: true });
+    const salesRep = await db.select().from(salesmen).where(and(eq(salesmen.id, salesmanId), smScope)).limit(1);
     if (!salesRep[0]) return NextResponse.json({ error: "Salesman not found" }, { status: 404 });
     const s = salesRep[0];
 
-    const docs = await db.select().from(documents).where(sql`doc_type in ('SINV','POS') and salesman_id = ${salesmanId} and date >= ${from} and date <= ${to} and status != 'Cancelled'`);
+    const docs = await db.select().from(documents).where(and(docScope, sql`doc_type in ('SINV','POS') and salesman_id = ${salesmanId} and date >= ${from} and date <= ${to} and status != 'Cancelled'`));
     const docIds = docs.map((d) => d.id);
     
     if (!docIds.length) {
@@ -266,8 +276,8 @@ export async function GET(req: Request) {
     }
 
     const lines = await db.select().from(documentLines).where(inArray(documentLines.documentId, docIds));
-    const allItems = await db.select().from(items);
-    const allParties = await db.select().from(parties);
+    const allItems = await db.select().from(items).where(itemScope);
+    const allParties = await db.select().from(parties).where(partyScope);
 
     const reportLines = [];
     for (const l of lines) {
@@ -299,16 +309,16 @@ export async function GET(req: Request) {
 
   /* ---------- Online orders: revenue, cost & profit per order ---------- */
   if (type === "online-orders") {
-    const onl = await db.select({ id: parties.id, name: parties.name }).from(parties).where(sql`lower(${parties.name}) like '%online%'`);
+    const onl = await db.select({ id: parties.id, name: parties.name }).from(parties).where(and(partyScope, sql`lower(${parties.name}) like '%online%'`));
     const ids = onl.map((o) => o.id);
     if (!ids.length) return NextResponse.json({ rows: [], totals: { orders: 0, revenue: 0, cost: 0, profit: 0, tax: 0 } });
 
     const docs = await db.select().from(documents)
-      .where(and(inArray(documents.partyId, ids), gte(documents.date, from), lte(documents.date, to), sql`${documents.docType} in ('SINV','POS')`, sql`${documents.status} != 'Cancelled'`))
+      .where(and(docScope, inArray(documents.partyId, ids), gte(documents.date, from), lte(documents.date, to), sql`${documents.docType} in ('SINV','POS')`, sql`${documents.status} != 'Cancelled'`))
       .orderBy(documents.date);
     const docIds = docs.map((d) => d.id);
     const lines = docIds.length ? await db.select().from(documentLines).where(inArray(documentLines.documentId, docIds)) : [];
-    const allItems = await db.select().from(items);
+    const allItems = await db.select().from(items).where(itemScope);
 
     let revenue = 0, cost = 0, tax = 0;
     const rows = docs.map((d) => {
@@ -342,7 +352,7 @@ export async function GET(req: Request) {
 
   if (type === "top-items") {
     const lines = await db.select().from(documentLines);
-    const docs = await db.select().from(documents).where(sql`${documents.docType} in ('SINV','POS')`);
+    const docs = await db.select().from(documents).where(and(docScope, sql`${documents.docType} in ('SINV','POS')`));
     const ids = new Set(docs.map((d) => d.id));
     const agg: Record<number, { qty: number; amount: number }> = {};
     for (const l of lines.filter((x) => ids.has(x.documentId) && x.itemId)) {
