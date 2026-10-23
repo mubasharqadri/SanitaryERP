@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
-import { api, useApi, PageHead, Btn, Field, inputCls, Table, Badge, Modal, money, PrintDoc, FbrStatusBadge, useToast, MultiFileUploader, SearchSelect, type SearchOption } from "@/components/erp";
+import { api, useApi, PageHead, Btn, Field, inputCls, Table, Badge, Modal, money, PrintDoc, FbrStatusBadge, useToast, MultiFileUploader, SearchSelect, usePrintContext, type PrintContext, type SearchOption } from "@/components/erp";
+import { amountInWords } from "@/lib/utils";
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v) || 0);
 
@@ -23,6 +24,8 @@ type DocLine = {
   furtherTaxRate?: number | string; furtherTax?: number;
   aitSection?: string; aitRate?: number | string; aitAmount?: number;
 };
+type PrintLine = { description?: string | null; qty: number; rate: number; amount: number; discountPct?: number; discountAmt?: number;
+  salesTaxRate?: number | string; salesTax?: number; taxExempt?: boolean; aitAmount?: number; unit?: string };
 type Party = { id: number; name: string; filerStatus: string; salesTaxRegistered: boolean; ntn: string | null; strn: string | null; cnic: string | null; contactPic?: string | null; city?: string | null; area?: string | null; phone?: string | null; mobile?: string | null; email?: string | null; province?: string | null };
 type TaxSettings = {
   salesTaxRate: string; enableSalesTax: boolean; furtherTaxRate: string; enableFurtherTax: boolean;
@@ -49,6 +52,10 @@ function aitRate(tax: TaxSettings | undefined, section: string, filer: string): 
 }
 
 const FILER_BADGE: Record<string, string> = { filer: "Filer ✓", late_filer: "Late Filer", non_filer: "Non-Filer" };
+const DOC_PRINT_TITLE: Record<string, string> = {
+  SINV: "INVOICE", POS: "CASH INVOICE", SRET: "SALES RETURN", PRET: "PURCHASE RETURN",
+  PINV: "PURCHASE INVOICE", QUOT: "QUOTATION", SO: "SALES ORDER", PO: "PURCHASE ORDER", ADJ: "ADJUSTMENT NOTE",
+};
 
 export function DocManager({ docType, title, icon, showConvert = true }: { docType: string; title: string; icon: string; showConvert?: boolean }) {
   const { data, loading, reload } = useApi<{ documents: Doc[] }>(`/api/documents?type=${docType}`);
@@ -114,6 +121,7 @@ export function DocManager({ docType, title, icon, showConvert = true }: { docTy
   const netPayable = Math.max(0, Math.round((grand - aitAmt) * 100) / 100);
 
   const defaultCompany = (coData?.rows ?? []).find((c) => c.isDefault) ?? (coData?.rows ?? [])[0];
+  const printCtx = usePrintContext();
 
   function resetForm() {
     setEditId(null);
@@ -550,42 +558,15 @@ export function DocManager({ docType, title, icon, showConvert = true }: { docTy
               <Btn small tone="success" onClick={() => syncFbr(view.document.id)}>📡 Sync to FBR</Btn>
             )}
           </div>
-          <PrintDoc
-            title={`${title} — ${view.document.docNo}`}
-            head={[
-              ["Date", String(view.document.date).slice(0, 10)], 
-              ["Party", isWalkin ? (view.document.walkinName || "Walk-in Customer") : partyName(view.document.partyId)], 
-              ["Payment", view.document.paymentMode], 
-              ["Status", view.document.status], 
-              ...(!isWalkin ? [["Filer", FILER_BADGE[view.document.buyerFilerStatus ?? ""] ?? view.document.buyerFilerStatus ?? "—"] as [string,string]] : []),
-              ...(view.document.walkinContact ? [["Contact", `${view.document.walkinContact}${view.document.walkinPhone ? " · " + view.document.walkinPhone : ""}`] as [string,string]] : []),
-              ...(view.document.walkinAddress || view.document.walkinCity ? [["Address", [view.document.walkinAddress, view.document.walkinCity].filter(Boolean).join(", ")] as [string,string]] : []),
-            ]}
-            lines={(view.lines as unknown as Array<{ description?: string | null; returnCondition?: string; qty: string | number; rate: string | number; amount: string | number }>).map((l) => ({ desc: l.returnCondition && l.returnCondition !== "normal" ? `${l.description ?? ""} [Cond: ${l.returnCondition.toUpperCase()}]` : l.description ?? "", qty: Number(l.qty), rate: Number(l.rate), amt: Number(l.amount) }))}
-            totals={[
-              /* --- charges & taxes: zero-value lines are hidden entirely --- */
-              ...(Number(view.document.discountPct) > 0 || Number(view.document.discountLumpsum) > 0
-                ? [["Discount", `${view.document.discountPct}% + Rs ${money(view.document.discountLumpsum)}`] as [string,string]] : []),
-              ...(Number(view.document.salesTax) > 0
-                ? [[`Sales Tax`, "Rs " + money(view.document.salesTax)] as [string,string]] : []),
-              ...(Number(view.document.furtherTax) > 0
-                ? [[`Further Tax u/s 3(1A)`, "Rs " + money(view.document.furtherTax)] as [string,string]] : []),
-              ...(Number(view.document.transportCharges) > 0
-                ? [["Transport Charges", "Rs " + money(view.document.transportCharges)] as [string,string]] : []),
-              ...(Number(view.document.laborCharges) > 0
-                ? [["Labor Charges", "Rs " + money(view.document.laborCharges)] as [string,string]] : []),
-              ...(Number(view.document.aitAmount) > 0
-                ? [[`Less AIT u/s 153 (withholding)`, "−Rs " + money(view.document.aitAmount)] as [string,string]] : []),
-              ["Grand Total", "Rs " + money(view.document.grandTotal)],
-              ...(Number(view.document.paidAmount) > 0
-                ? [["Paid", "Rs " + money(view.document.paidAmount)] as [string,string]] : []),
-              ...((Number(view.document.grandTotal) - Number(view.document.paidAmount)) > 0
-                ? [["Balance Due", "Rs " + money(Number(view.document.grandTotal) - Number(view.document.paidAmount))] as [string,string]] : []),
-            ]}
-            company={defaultCompany ? { name: defaultCompany.name, ntn: defaultCompany.ntn, strn: defaultCompany.strn } : null}
-            showFooter={["SINV", "SO"].includes(view.document.docType)}
-            pictures={picturesOf(view.lines)}
+          <DocumentPrint
+            view={view}
+            docTitle={DOC_PRINT_TITLE[view.document.docType] ?? title.toUpperCase()}
+            partyLabel={docType === "PO" || docType === "PINV" || docType === "PRET" ? "Vendor" : "Customer"}
+            partyName={partyName(view.document.partyId)}
+            salesmanName={smData?.rows.find((x) => String(x.id) === String(view.document.salesmanId ?? ""))?.name ?? ""}
+            ctx={printCtx}
           />
+
 
           {/* Render attached files for commercial documents */}
           {view.document.documents && (
@@ -611,3 +592,200 @@ export function DocManager({ docType, title, icon, showConvert = true }: { docTy
     </div>
   );
 }
+
+/* ------------------------------------------------------------------
+   Trade-style document print (Invoice / Quotation / Order / Return).
+   Company + Branch at top with address & tax registration, customer /
+   vendor box, right-hand document-number box, and a line grid carrying
+   Gross, Discount (%age + Amount), Net, Sales Tax and AIT — tax columns
+   are printed only when they carry a value.
+------------------------------------------------------------------- */
+function DocumentPrint({
+  view, docTitle, partyLabel, partyName, salesmanName, ctx,
+}: {
+  view: { document: Doc; lines: DocLine[] };
+  docTitle: string; partyLabel: string; partyName: string; salesmanName: string; ctx: PrintContext;
+}) {
+  const lines = view.lines as unknown as PrintLine[];
+  const d = view.document;
+  const docDate = new Date(d.date);
+  const dateStr = `${String(docDate.getDate()).padStart(2, "0")}-${String(docDate.getMonth() + 1).padStart(2, "0")}-${docDate.getFullYear()}`;
+
+  const row = (l: PrintLine) => {
+    const gross = Number(l.qty) * Number(l.rate);
+    const discPct = Number(l.discountPct ?? 0);
+    const discAmt = Number(l.discountAmt ?? 0) || Math.round(((gross * discPct) / 100) * 100) / 100;
+    return { gross: r2(gross), discPct, discAmt: r2(discAmt), net: Number(l.amount) };
+  };
+  const calc = lines.map(row);
+  const showST = lines.some((l) => !l.taxExempt && Number(l.salesTax ?? 0) > 0);
+  const showAIT = lines.some((l) => Number(l.aitAmount ?? 0) > 0);
+
+  const totQty = lines.reduce((a, l) => a + Number(l.qty), 0);
+  const totGross = calc.reduce((a, c) => a + c.gross, 0);
+  const totDisc = calc.reduce((a, c) => a + c.discAmt, 0) + Number(d.discountLumpsum ?? 0);
+  const totNet = calc.reduce((a, c) => a + c.net, 0);
+  const totST = lines.reduce((a, l) => a + Number(l.salesTax ?? 0), 0);
+  const totFT = Number(d.furtherTax ?? 0);
+  const totAIT = Number(d.aitAmount ?? 0);
+  const charges = Number(d.transportCharges ?? 0) + Number(d.laborCharges ?? 0);
+  const netTotal = r2(totNet + totST + totFT + charges);
+  const grand = Number(d.grandTotal ?? 0) || r2(netTotal - totAIT);
+
+  const b = "border border-slate-900";
+  const cell = `${b} px-1.5 py-1 align-top`;
+  const cust = isWalkinDoc(d);
+
+  return (
+    <div className="mx-auto w-full max-w-[1050px] bg-white p-5 font-sans text-slate-900">
+      {/* ---- Letterhead: brand mark + company + branch + address, title at right ---- */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          {ctx.letterhead?.headerImage ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={ctx.letterhead.headerImage} alt="" className="h-16 w-16 rounded object-contain" />
+          ) : (
+            <div className="grid h-16 w-16 place-items-center rounded-lg border-2 border-slate-900 text-xl font-black">AE</div>
+          )}
+          <div>
+            <h1 className="text-2xl font-extrabold italic tracking-tight">{ctx.companyName}</h1>
+            {ctx.branchName && (
+              <div className="mt-0.5 inline-block bg-slate-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                {ctx.branchName}{ctx.isHeadOffice ? " (Head Office)" : ""}
+              </div>
+            )}
+            {ctx.address && <div className="mt-0.5 text-[11px] leading-snug">{ctx.address}</div>}
+            <div className="text-[11px] leading-snug">
+              {[ctx.phone, ctx.email].filter(Boolean).join("  ·  ")}
+            </div>
+            <div className="text-[11px] font-semibold leading-snug">
+              {[ctx.ntn ? `NTN: ${ctx.ntn}` : null, ctx.strn ? `STRN: ${ctx.strn}` : null].filter(Boolean).join("   ")}
+            </div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] text-slate-500">Page 1 of 1</div>
+          <div className="mt-6 border-2 border-slate-900 px-5 py-1 text-lg font-black tracking-wide">{docTitle}</div>
+        </div>
+      </div>
+
+      {/* ---- Party block + document numbers ---- */}
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_240px]">
+        <div className={`${b} p-2 text-[12px]`}>
+          <div className="flex gap-2"><span className="w-20 font-bold">{partyLabel}</span><span className="font-bold">:</span><b className="uppercase">{cust ? d.walkinName || "WALK-IN CUSTOMER" : partyName}</b></div>
+          <div className="flex gap-2"><span className="w-20">Address</span><span>:</span><span>{[d.walkinAddress, d.walkinCity].filter(Boolean).join(", ") || " "}</span></div>
+          <div className="flex gap-2"><span className="w-20">Phone</span><span>:</span><span>{d.walkinPhone || " "}</span></div>
+          <div className="flex gap-2"><span className="w-20">Project</span><span>:</span><span>{d.notes ? d.notes.slice(0, 40) : " "}</span></div>
+          <div className="flex gap-2"><span className="w-20 font-bold">Salesman</span><span className="font-bold">:</span><b>{salesmanName || " "}</b></div>
+          <div className="mt-1 border-t border-dashed border-slate-400 pt-1">
+            <div className="flex gap-2"><span className="w-20 font-bold">Send Info</span>
+              <span className="flex-1 grid grid-cols-2 gap-x-4">
+                <span className="border-b border-dotted border-slate-500">Veh No. :</span><span className="border-b border-dotted border-slate-500">Driver :</span>
+                <span className="col-span-2 border-b border-dotted border-slate-500">Other Info :</span>
+                <span className="col-span-2">Mobile : {d.walkinPhone || " "}</span>
+              </span>
+            </div>
+          </div>
+          <div className="mt-1 text-[11px]">Payment : <b className="uppercase">{d.paymentMode}</b>{Number(d.paidAmount) > 0 && <> · Paid: <b>{money(d.paidAmount)}</b></>}</div>
+        </div>
+        <div className={`${b} p-2 text-[12px]`}>
+          {[["Invoice #", d.docNo], ["Date", dateStr], ["Order #", ""], ["PO #", ""], ["BO #", ""]].map(([k, v], i) => (
+            <div key={k} className={`flex items-center justify-between gap-2 ${i ? "mt-1" : ""}`}>
+              <span className="font-bold">{k}</span>
+              <span className="min-w-[110px] border-b border-slate-900 px-1 text-center font-mono">{v || " "}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ---- Line items ---- */}
+      <table className="mt-3 w-full border-collapse text-[11.5px]">
+        <thead>
+          <tr className="bg-slate-100 text-center">
+            <th className={`${cell} w-[34px]`}>Sr</th>
+            <th className={`${cell} text-left`}>Particulars</th>
+            <th className={`${cell} w-[52px] text-right`}>Qty</th>
+            <th className={`${cell} w-[58px]`}>Unit</th>
+            <th className={`${cell} w-[80px] text-right`}>Rate</th>
+            <th className={`${cell} w-[86px] text-right`}>Gross Amount</th>
+            <th className={`${cell} w-[46px] text-right`}>%age</th>
+            <th className={`${cell} w-[80px] text-right`}>Amount</th>
+            <th className={`${cell} w-[86px] text-right`}>Net Amount</th>
+            {showST && <th className={`${cell} w-[46px] text-right`}>GST %</th>}
+            {showST && <th className={`${cell} w-[82px] text-right`}>Sales Tax</th>}
+            {showAIT && <th className={`${cell} w-[82px] text-right`}>AIT u/s 153</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l, i) => {
+            const c = calc[i];
+            return (
+              <tr key={i}>
+                <td className={`${cell} text-center`}>{i + 1}</td>
+                <td className={cell}>
+                  <div className="font-semibold uppercase">{l.description || "—"}</div>
+                  {l.taxExempt && <div className="text-[10px] italic text-slate-500">Exempt supply (6th Sch.)</div>}
+                </td>
+                <td className={`${cell} text-right`}>{l.qty}</td>
+                <td className={`${cell} text-center`}>{l.unit || "—"}</td>
+                <td className={`${cell} text-right`}>{money(l.rate)}</td>
+                <td className={`${cell} text-right`}>{money(c.gross)}</td>
+                <td className={`${cell} text-right`}>{c.discPct || " "}</td>
+                <td className={`${cell} text-right`}>{c.discAmt ? money(c.discAmt) : " "}</td>
+                <td className={`${cell} text-right font-semibold`}>{money(c.net)}</td>
+                {showST && <td className={`${cell} text-right`}>{l.taxExempt ? "EX" : Number(l.salesTaxRate ?? 0) || " "}</td>}
+                {showST && <td className={`${cell} text-right`}>{Number(l.salesTax ?? 0) ? money(l.salesTax) : " "}</td>}
+                {showAIT && <td className={`${cell} text-right`}>{Number(l.aitAmount ?? 0) ? money(l.aitAmount) : " "}</td>}
+              </tr>
+            );
+          })}
+          {/* Totals */}
+          <tr className="bg-slate-50 font-bold">
+            <td className={cell} colSpan={2}>Total :</td>
+            <td className={`${cell} text-right`}>{Math.round(totQty * 100) / 100}</td>
+            <td className={cell} colSpan={2} />
+            <td className={`${cell} text-right`}>{money(totGross)}</td>
+            <td className={cell} colSpan={2} />
+            <td className={`${cell} text-right`}>{money(totNet)}</td>
+            {showST && <td className={cell} colSpan={2} />}
+            {showAIT && <td className={cell} />}
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ---- Tax / charge summary, zero values omitted ---- */}
+      <div className="mt-2 ml-auto w-[330px] text-[12px]">
+        {totST > 0 && <SumRow label="Sales Tax" value={totST} />}
+        {totFT > 0 && <SumRow label="Further Tax u/s 3(1A)" value={totFT} />}
+        {Number(d.transportCharges ?? 0) > 0 && <SumRow label="Transport Charges" value={Number(d.transportCharges)} />}
+        {Number(d.laborCharges ?? 0) > 0 && <SumRow label="Labor Charges" value={Number(d.laborCharges)} />}
+        <SumRow label="Net Total" value={netTotal} bold />
+        {totAIT > 0 && <SumRow label="Less AIT u/s 153 (withholding)" value={-totAIT} />}
+        <div className={`mt-1 flex items-center justify-between border-2 border-slate-900 px-2 py-1 font-extrabold`}>
+          <span>Grand Total :</span><span>{money(grand)}</span>
+        </div>
+        <div className="mt-0.5 text-right text-[10px] italic">{amountInWords(grand).toUpperCase()} ONLY</div>
+      </div>
+
+      {/* ---- Footer: posted by + signature ---- */}
+      <div className="mt-12 flex items-end justify-between text-[11px]">
+        <div className="italic">Posted by {ctx.postedBy || "_______"}</div>
+        <div className="text-center">
+          <div className="w-40 border-t border-slate-900" />
+          <div className="mt-1">Signature</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SumRow({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between border-x border-b border-slate-900 px-2 py-1 ${bold ? "font-bold" : ""}`}>
+      <span>{label} :</span><span>{money(value)}</span>
+    </div>
+  );
+}
+
+function r2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+function isWalkinDoc(d: Doc) { return !!d.partyId && !!d.walkinName; }

@@ -1,4 +1,8 @@
-# 🏛️ Sanitary ERP — Features & Installation Document
+# 🏛️ Awami ERP — Features & Installation Document
+
+> **Brand:** Awami ERP. Every document, voucher, report and print is branded with the **selected company's name and branch** — the company name is never hard-coded.
+
+---
 
 An enterprise-grade, localized ERP + public storefront specifically designed for the **Sanitary, Tile, and Brass Fittings industry**, built with **Next.js 16 (App Router), PostgreSQL 17, and Drizzle ORM**. It combines a customer-facing product website with a full back-office ERP covering accounting, inventory, POS, salesman tracking, and multi-company / multi-currency capabilities.
 
@@ -170,6 +174,13 @@ The **home page (`/`)** is a public website that any visitor can open without lo
 
 * **Multi-Company** and **Multi-Currency** tables with exchange rates and symbols.
 * **Letterheads:** Distinct print headers/footers, one marked default, plus **uploadable header and footer artwork images** that print above the body and below the footer text on every document and report.
+* **Company & Branch on Every Print**: All prints — invoices, quotations, orders, returns, vouchers, statements, registers and reports — read their branding from the **selected company and branch at login**. The letterhead prints the company name, the branch (marked “Head Office” where applicable), address, phone/email and NTN/STRN, so a branch login prints that branch's identity and a head-office admin prints the company identity. `Awami ERP` is the product brand; the trading name on paper is always the company record.
+* **Trade-Style Document Print (Invoice / Quotation / Order)**: Mirrors a printed trade invoice — brand mark, company name in bold italic with the branch tag beneath, address and tax registration, a `Page 1 of 1` marker and the document title (`INVOICE`, `QUOTATION`, `SALES ORDER`, `PURCHASE ORDER`, `SALES RETURN`, …) in a boxed block at the right.
+  - **Party block**: Customer/Vendor name in capitals, address, phone, project, salesman, plus a dotted *Send Info* strip (Veh No. / Driver / Other Info / Mobile) for handwritten delivery details.
+  - **Document-number box**: Invoice #, Date, then Order # / PO # / BO # on dotted rules.
+  - **Line grid**: `Sr | Particulars | Qty | Unit | Rate | Gross Amount | Discount %age | Discount Amount | Net Amount`, plus **Sales Tax %** / **Sales Tax** and **AIT u/s 153** columns. Exempt lines print `EX` in the GST % cell and a note under the description.
+  - **Zero-suppression**: if no line carries sales tax, the GST columns are omitted; if no line carries AIT, the AIT column is omitted; discount, further-tax, transport and labor rows only print when non-zero.
+  - **Totals**: quantity + gross + discount + net totals row, then Sales Tax / Further Tax / charges rows, **Net Total**, **Less AIT** (when withheld) and a boxed **Grand Total** with the amount in words, then *Posted by …* and a signature rule.
 * **Company Document Pack:** Each company accepts **multiple file attachments** (registration, NTN certificate, STRN certificate, contracts, agreements) using the same multi-file uploader as other modules; the file count shows in the companies list.
 * **Bulk Data Transfer (migration from other software)**: A dedicated **Settings → Data Upload** screen with downloadable CSV **templates** and an importer for Items, Salesmen, Customers, Vendors, Chart of Accounts, Vouchers, Sales Invoices, Sales Returns, Purchase Invoices, Purchase Returns, Sales Orders, Purchase Orders, Quotations and Adjustment Invoices. Master data is upserted by code; transactions are grouped into documents and posted with full stock and ledger effects. Malformed rows are rejected with a precise per-row error list.
 * **Upload / Download Permissions**: A `data_upload` right per user controls who may import CSV data and who may download templates, toggleable from Settings → Permissions. Admins always retain both.

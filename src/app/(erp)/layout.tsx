@@ -118,7 +118,7 @@ export default function ErpLayout({ children }: { children: React.ReactNode }) {
           </button>
           <Link href="/dashboard" className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-lg">🏛️</span>
-            <span className="font-bold">Sanitary ERP</span>
+            <span className="font-bold">Awami ERP</span>
           </Link>
         </div>
         <div className="flex items-center gap-3">

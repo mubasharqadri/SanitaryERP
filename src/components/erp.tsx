@@ -322,6 +322,28 @@ export function useLetterhead() {
   return letterhead;
 }
 
+export type PrintContext = {
+  companyName: string; branchName: string | null; branchCode: string | null;
+  isHeadOffice: boolean; allBranches: boolean;
+  address: string | null; phone: string | null; email: string | null;
+  ntn: string | null; strn: string | null; postedBy: string | null;
+  letterhead: { name: string; headerText: string | null; footerText: string | null; headerImage: string | null; footerImage: string | null } | null;
+};
+
+const EMPTY_CTX: PrintContext = {
+  companyName: "Awami ERP", branchName: null, branchCode: null, isHeadOffice: true, allBranches: false,
+  address: null, phone: null, email: null, ntn: null, strn: null, postedBy: null, letterhead: null,
+};
+
+/** Branding for the logged-in company + branch — used by every print. */
+export function usePrintContext(): PrintContext {
+  const [ctx, setCtx] = useState<PrintContext>(EMPTY_CTX);
+  useEffect(() => {
+    fetch("/api/print-context").then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => setCtx(d as PrintContext)).catch(() => {});
+  }, []);
+  return ctx;
+}
+
 /** Standard Fallback Header & Footer content modeled around Pakistan tax configurations */
 const FALLBACK_HEADER = "AL-NOOR SANITARY & TILES\nMain G.T. Road, Gujranwala | 055-1234567 | info@alnoorsanitory.pk\nNTN: 1234567-8 | STRN: 3277876123456";
 const FALLBACK_FOOTER = "Thank you for your business! | Goods once sold will not be returned without receipt within 7 days.";
@@ -342,24 +364,29 @@ export function LetterheadPrintWrapper({
   /** Only commercial customer-facing docs (Sales Invoice / Sales Order) print the thank-you footer. */
   showFooter?: boolean;
 }) {
+  const ctx = usePrintContext();
   const lh = useLetterhead();
-  const headerLines = (lh?.headerText ?? FALLBACK_HEADER).split("\n");
-  const footerText = lh?.footerText ?? FALLBACK_FOOTER;
-  const HeaderImage = lh?.headerImage;
-  const FooterImage = lh?.footerImage;
+  const footerText = lh?.footerText ?? ctx.letterhead?.footerText ?? "";
+  const FooterImage = lh?.footerImage ?? ctx.letterhead?.footerImage ?? null;
+  const company = ctx.companyName || "Awami ERP";
+  const branchLine = ctx.branchName
+    ? ctx.isHeadOffice ? `${ctx.branchName} (Head Office)` : `${ctx.branchCode ? ctx.branchCode + " · " : ""}${ctx.branchName}`
+    : ctx.allBranches ? "All Branches · Head Office" : null;
+  const addrLine = [ctx.address, ctx.phone].filter(Boolean).join("  |  ");
+  const taxLine = [ctx.ntn ? `NTN: ${ctx.ntn}` : null, ctx.strn ? `STRN: ${ctx.strn}` : null].filter(Boolean).join("  |  ");
 
   if (layout === "Thermal") {
     return (
       <div className="mx-auto max-w-[300px] border border-dashed p-4 bg-white text-slate-900 font-mono text-[10px] leading-tight">
-        <div className="text-center font-bold text-xs uppercase">{headerLines[0] || "AL-NOOR SANITARY & TILES"}</div>
-        <div className="text-center text-[9px] text-slate-500 mt-1 whitespace-pre-line">
-          {headerLines.slice(1).join("\n")}
-        </div>
+        <div className="text-center font-bold text-xs uppercase">{company}</div>
+        {branchLine && <div className="text-center text-[9px] text-slate-600">{branchLine}</div>}
+        {addrLine && <div className="text-center text-[9px] text-slate-500">{addrLine}</div>}
+        {taxLine && <div className="text-center text-[9px] text-slate-500">{taxLine}</div>}
         <div className="my-2 border-t border-dashed" />
         <div className="text-center font-bold uppercase tracking-wider text-xs mb-2">{title}</div>
         {children}
         <div className="my-2 border-t border-dashed" />
-        {showFooter && <div className="text-center text-[9px] text-slate-500">{footerText}</div>}
+        {showFooter && footerText && <div className="text-center text-[9px] text-slate-500">{footerText}</div>}
         {showFooter && FooterImage && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={FooterImage} alt="" className="mx-auto mt-1 max-h-[40px] w-auto" />
@@ -368,28 +395,28 @@ export function LetterheadPrintWrapper({
     );
   }
 
-  const wrapperCls = layout === "A5" 
-    ? "mx-auto max-w-[580px] border p-6 bg-white text-slate-900 font-sans shadow-sm text-xs" 
-    : "mx-auto max-w-[800px] border p-8 bg-white text-slate-900 font-sans shadow-sm text-sm";
+  const wrapperCls = layout === "A5"
+    ? "mx-auto max-w-[640px] border p-6 bg-white text-slate-900 font-sans shadow-sm text-xs"
+    : "mx-auto max-w-[900px] border p-8 bg-white text-slate-900 font-sans shadow-sm text-sm";
 
   return (
     <div className={wrapperCls}>
-      {HeaderImage && (
+      {(lh?.headerImage ?? ctx.letterhead?.headerImage) && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={HeaderImage} alt="letterhead" className="mb-3 w-full rounded-lg object-contain" />
+        <img src={(lh?.headerImage ?? ctx.letterhead?.headerImage) as string} alt="letterhead" className="mb-3 w-full rounded-lg object-contain" />
       )}
-      <div className="text-center border-b pb-4 mb-4">
-        <h1 className="text-2xl font-extrabold tracking-wide uppercase text-slate-900">{headerLines[0] || "AL-NOOR SANITARY & TILES"}</h1>
-        <div className="text-xs text-slate-500 mt-1.5 whitespace-pre-line font-medium leading-relaxed">
-          {headerLines.slice(1).join("\n")}
-        </div>
+      <div className="border-b-2 border-slate-900 pb-3 mb-4 text-center">
+        <h1 className="text-2xl font-extrabold tracking-wide uppercase text-slate-900">{company}</h1>
+        {branchLine && <div className="text-[11px] font-bold uppercase tracking-wide text-slate-700 mt-0.5">{branchLine}</div>}
+        {addrLine && <div className="text-xs text-slate-600 mt-1">{addrLine}</div>}
+        {taxLine && <div className="text-[11px] text-slate-600 mt-0.5">{taxLine}</div>}
       </div>
-      <div className="my-4 text-center font-extrabold text-lg tracking-widest uppercase bg-slate-50 border-y py-2">
+      <div className="mb-4 text-center font-extrabold text-lg tracking-widest uppercase bg-slate-100 border-y py-2">
         {title}
       </div>
       {children}
-      {showFooter && (
-        <div className="mt-12 pt-4 border-t text-center text-xs text-slate-500 italic">
+      {showFooter && (footerText || FooterImage) && (
+        <div className="mt-10 pt-3 border-t text-center text-xs text-slate-500 italic">
           {footerText}
           {FooterImage && (
             // eslint-disable-next-line @next/next/no-img-element

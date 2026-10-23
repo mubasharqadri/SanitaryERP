@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Al-Noor Sanitary & Tiles — ERP & Storefront",
-  description: "Sanitary, Tile & Brass Fittings ERP: storefront, inventory, POS, accounting, and reports.",
+  title: "Awami ERP — Accounting, Inventory & Storefront",
+  description: "Awami ERP — multi-company, multi-branch accounting, inventory, POS, taxation and storefront.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

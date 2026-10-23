@@ -61,7 +61,7 @@ function LoginForm() {
       <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl">
         <div className="text-center">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-indigo-600 to-blue-800 text-3xl">🏛️</div>
-          <h1 className="mt-3 text-2xl font-extrabold text-slate-900">Sanitary ERP</h1>
+          <h1 className="mt-3 text-2xl font-extrabold text-slate-900">Awami ERP</h1>
           <p className="text-sm text-slate-500">Company &amp; Branch Staff Login</p>
         </div>
         <form onSubmit={submit} className="mt-6 space-y-4">

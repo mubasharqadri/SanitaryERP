@@ -68,6 +68,14 @@ export async function ensureTaxSeed(): Promise<void> {
   await db.execute(sql`ALTER TABLE documents ADD CONSTRAINT documents_type_chk
     CHECK (doc_type IN ('QUOT','SO','SINV','PO','PINV','SRET','PRET','POS','ADJ'))`);
 
+  // Rebrand legacy seed company (safe: only touches the original seed name)
+  await db.update(companies).set({ name: "Awami ERP" })
+    .where(sql`${companies.name} in ('Al-Noor Sanitary & Tiles', 'Al Noor Sanitary & Tiles')`);
+  await db.update(letterheads).set({ headerText: sql`replace(${letterheads.headerText}, 'AL-NOOR SANITARY & TILES', 'AWAMI ERP')` })
+    .where(sql`${letterheads.headerText} like '%AL-NOOR SANITARY & TILES%'`);
+  await db.update(fbrSettings).set({ businessName: "Awami ERP" })
+    .where(sql`${fbrSettings.businessName} in ('Al-Noor Sanitary & Tiles', 'Al Noor Sanitary & Tiles')`);
+
   const t = await db.select().from(taxSettings).limit(1);
   if (!t[0]) await db.insert(taxSettings).values({});
   const f = await db.select().from(fbrSettings).limit(1);
@@ -107,7 +115,7 @@ async function runSeed() {
   const pkr = curRows.find((c) => c.code === "PKR")!;
 
   const comp = (await db.insert(companies).values({
-    name: "Al-Noor Sanitary & Tiles", address: "Main G.T. Road, Gujranwala, Pakistan",
+    name: "Awami ERP", address: "Main G.T. Road, Gujranwala, Pakistan",
     phone: "055-1234567", email: "info@alnoorsanitry.pk", ntn: "1234567-8",
     strn: "3277876123456", baseCurrencyId: pkr.id, isDefault: true,
   }).returning())[0];
@@ -159,7 +167,7 @@ async function runSeed() {
     { name: "Modern Bath Gallery", city: "Lahore", area: "DHA Phase 2", phone: "042-3333333", mobile: "0300-3333333", openingBalance: "0", creditLimit: "1000000", salesmanId: smRows[2].id, ntn: "4567890-3", strn: "3277876111002", cnic: "35202-1111111-5", filerStatus: "filer", salesTaxRegistered: true, province: "Punjab" },
     { name: "Royal Builders", city: "Gujranwala", area: "Citi Housing", phone: "055-4444444", mobile: "0300-4444444", openingBalance: "250000", creditLimit: "2000000", salesmanId: smRows[0].id, ntn: "", strn: "", cnic: "34101-9999999-1", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
     { name: "Walk-in Customer", city: "Gujranwala", area: "Counter", phone: "-", mobile: "-", openingBalance: "0", creditLimit: "0", salesmanId: null, ntn: "", strn: "", cnic: "", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
-    { name: "Online-Customer", city: "Web Orders", area: "Online Store", phone: "042-111-444-888", mobile: "0300-1112223", email: "orders@alnoorsanitory.pk", openingBalance: "0", creditLimit: "0", salesmanId: null, ntn: "", strn: "", cnic: "", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
+    { name: "Online-Customer", city: "Web Orders", area: "Online Store", phone: "042-111-444-888", mobile: "0300-1112223", email: "orders@awamierp.pk", openingBalance: "0", creditLimit: "0", salesmanId: null, ntn: "", strn: "", cnic: "", filerStatus: "non_filer", salesTaxRegistered: false, province: "Punjab" },
   ];
   const custRows = [];
   for (const c of custData) {
@@ -212,7 +220,7 @@ async function runSeed() {
 
   await db.insert(letterheads).values({
     companyId: comp.id, branchId: ho.id, name: "Standard",
-    headerText: "AL-NOOR SANITARY & TILES\nMain G.T. Road, Gujranwala | 055-1234567 | info@alnoorsanitory.pk\nNTN: 1234567-8 | STRN: 3277876123456",
+    headerText: "AWAMI ERP\nWholesale & Retail: Sanitary Ware, Tiles, Brass Fittings & Accessories\nMain G.T. Road, Gujranwala | 055-1234567 | info@awamierp.pk\nNTN: 1234567-8 | STRN: 3277876123456",
     footerText: "Thank you for your business! | Goods once sold will not be returned without receipt within 7 days.", isDefault: true,
   });
 }

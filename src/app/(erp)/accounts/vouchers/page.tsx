@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
-import { api, useApi, PageHead, Btn, Field, inputCls, SearchInput, Table, Badge, Modal, money, useToast, LetterheadPrintWrapper, MultiFileUploader, SearchSelect, AnalyticalField, type SearchOption } from "@/components/erp";
+import { api, useApi, PageHead, Btn, Field, inputCls, SearchInput, Table, Badge, Modal, money, useToast, LetterheadPrintWrapper, MultiFileUploader, SearchSelect, AnalyticalField, useLetterhead, type SearchOption } from "@/components/erp";
+import { amountInWords } from "@/lib/utils";
 
 type V = { id: number; voucherType: string; voucherNo: string; date: string; narration: string | null; totalDebit: string; totalCredit: string; partyId: number | null; documentId: number | null; status: string; documents: string | null };
 type VL = { accountId: number; debit: number; credit: number; narration: string; partyId: number | null; analyticalDistribution: string; chequeNo: string; chequeDate: string };
 
 const TYPES = ["JV", "BRV", "BPV", "CRV", "CPV", "ADJ"];
 const TYPE_LABEL: Record<string, string> = { JV: "📓 Journal", BRV: "🏦 Bank Receipt", BPV: "🏦 Bank Payment", CRV: "💵 Cash Receipt", CPV: "💸 Cash Payment", ADJ: "🔧 Adjustment" };
+const TYPE_TITLE: Record<string, string> = { JV: "Journal Voucher", BRV: "Bank Receipt Voucher", BPV: "Bank Payment Voucher", CRV: "Cash Receipt Voucher", CPV: "Cash Payment Voucher", ADJ: "Adjustment Voucher", SINV: "Sales Invoice Voucher", PINV: "Purchase Invoice Voucher", POS: "Cash Sales Voucher", QUOT: "Quotation", SO: "Sales Order", PO: "Purchase Order" };
 
 export default function VouchersPage() {
   const { data, loading, reload } = useApi<{ vouchers: V[] }>("/api/vouchers");
@@ -16,24 +18,28 @@ export default function VouchersPage() {
   const [q, setQ] = useState("");
   const [show, setShow] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
+  const [editingAuto, setEditingAuto] = useState(false);
   const [h, setH] = useState({ voucherType: "JV", date: new Date().toISOString().slice(0, 10), narration: "", partyId: "", documents: "" });
   const [lines, setLines] = useState<VL[]>([
     { accountId: 0, debit: 0, credit: 0, narration: "", partyId: null, analyticalDistribution: "", chequeNo: "", chequeDate: "" },
     { accountId: 0, debit: 0, credit: 0, narration: "", partyId: null, analyticalDistribution: "", chequeNo: "", chequeDate: "" }
   ]);
-  const [view, setView] = useState<{ voucher: V; lines: Array<{ accountId: number | null; debit: string; credit: string; narration: string | null; partyId: number | null; analyticalDistribution: string | null }> } | null>(null);
+  const [view, setView] = useState<{ voucher: V; lines: Array<{ accountId: number | null; debit: string; credit: string; narration: string | null; partyId: number | null; analyticalDistribution: string | null; chequeNo: string | null; chequeDate: string | null }> } | null>(null);
   const [printLayout, setPrintLayout] = useState<"A4" | "A5" | "Thermal">("A4");
   const [printListMode, setPrintListMode] = useState(false);
   const { msg, setMsg, toast } = useToast();
 
   const list = (data?.vouchers ?? []).filter((v) => (!filter || v.voucherType === filter) && (!q || (v.voucherNo + (v.narration ?? "")).toLowerCase().includes(q.toLowerCase())));
-  const accName = (id: number | null) => { const a = (accData?.accounts ?? []).find((x) => x.id === id); return a ? `${a.code} — ${a.name}` : "#" + id; };
+  const accRow = (id: number | null) => (accData?.accounts ?? []).find((x) => x.id === id);
+  const accName = (id: number | null) => { const a = accRow(id); return a ? `${a.code} — ${a.name}` : "#" + id; };
+  const accCode = (id: number | null) => accRow(id)?.code ?? "—";
+  const accTitle = (id: number | null) => accRow(id)?.name ?? "—";
   const partyName = (id: number | null) => { const p = (partyData?.parties ?? []).find((x) => x.id === id); return p ? `${p.name}` : "—"; };
   const td = lines.reduce((a, l) => a + l.debit, 0);
   const tc = lines.reduce((a, l) => a + l.credit, 0);
 
   function resetForm() {
-    setEditId(null);
+    setEditId(null); setEditingAuto(false);
     setH({ voucherType: "JV", date: new Date().toISOString().slice(0, 10), narration: "", partyId: "", documents: "" });
     setLines([
       { accountId: 0, debit: 0, credit: 0, narration: "", partyId: null, analyticalDistribution: "", chequeNo: "", chequeDate: "" },
@@ -43,9 +49,7 @@ export default function VouchersPage() {
   }
 
   async function triggerEdit(v: V) {
-    if (v.documentId) {
-       return setMsg("!Auto-posted invoice vouchers must be modified through their source Invoices, not directly.");
-    }
+    setEditingAuto(!!v.documentId);
     try {
       const res = await api<{ voucher: V; lines: Array<{ accountId: number; debit: string; credit: string; narration: string | null; partyId: number | null; analyticalDistribution: string | null; chequeNo: string | null; chequeDate: string | null }> }>(`/api/vouchers?id=${v.id}`);
       setEditId(v.id);
@@ -170,9 +174,10 @@ export default function VouchersPage() {
               <td className="px-3 py-2 text-right">{money(v.totalCredit)}</td>
               <td className="px-3 py-2"><Badge tone={v.status === "Cancelled" ? "red" : "green"}>{v.status}</Badge></td>
               <td className="px-3 py-2 text-right whitespace-nowrap space-x-1.5">
-                <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={async () => setView(await api(`/api/vouchers?id=${v.id}`))}>View</button>
-                {!v.documentId && v.status !== "Cancelled" && (
-                  <button className="text-xs font-semibold text-slate-600 hover:underline" onClick={() => triggerEdit(v)}>Edit</button>
+                <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={async () => setView(await api(`/api/vouchers?id=${v.id}`))}>👁 View</button>
+                {v.status !== "Cancelled" && (
+                  <button title={v.documentId ? "Edit narration, party & cheque details (amounts are locked to the source invoice)" : "Edit voucher"}
+                    className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs font-bold text-slate-700 hover:bg-slate-100" onClick={() => triggerEdit(v)}>✏️ Edit</button>
                 )}
                 {v.status !== "Cancelled" && (
                   <button className="text-xs font-semibold text-amber-600 hover:underline" onClick={() => cancelVoucher(v.id)}>Cancel</button>
@@ -187,6 +192,12 @@ export default function VouchersPage() {
       {show && (
         <Modal title={editId ? `Edit Voucher (${editId})` : "New Voucher"} onClose={() => setShow(false)} full>
           <div className="space-y-4">
+            {editingAuto && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                🔒 This voucher was auto-posted from an invoice. You may edit the <b>narration, party, cheque details and attachments</b>.
+                Account codes and amounts are locked so they keep matching the source document — edit the invoice itself to change values.
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Type"><select className={inputCls} disabled={editId !== null} value={h.voucherType} onChange={(e) => setH({ ...h, voucherType: e.target.value })}>
                 {TYPES.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
@@ -213,6 +224,7 @@ export default function VouchersPage() {
                         <label className="text-[10px] text-slate-500 block mb-0.5">Account *</label>
                         <SearchSelect
                           value={l.accountId}
+                          disabled={editingAuto}
                           onChange={(v) => setLines(lines.map((x, xi) => xi === i ? { ...x, accountId: Number(v) } : x))}
                           options={accOptions}
                           placeholder="🔍 Search account…"
@@ -222,11 +234,11 @@ export default function VouchersPage() {
                       </div>
                       <div>
                         <label className="text-[10px] text-slate-500 block mb-0.5">Debit</label>
-                        <input type="number" className={`${inputCls} text-right`} placeholder="Debit" value={l.debit} onChange={(e) => setLines(lines.map((x, xi) => xi === i ? { ...x, debit: Number(e.target.value) } : x))} />
+                        <input type="number" className={`${inputCls} text-right`} placeholder="Debit" disabled={editingAuto} value={l.debit} onChange={(e) => setLines(lines.map((x, xi) => xi === i ? { ...x, debit: Number(e.target.value) } : x))} />
                       </div>
                       <div>
                         <label className="text-[10px] text-slate-500 block mb-0.5">Credit</label>
-                        <input type="number" className={`${inputCls} text-right`} placeholder="Credit" value={l.credit} onChange={(e) => setLines(lines.map((x, xi) => xi === i ? { ...x, credit: Number(e.target.value) } : x))} />
+                        <input type="number" className={`${inputCls} text-right`} placeholder="Credit" disabled={editingAuto} value={l.credit} onChange={(e) => setLines(lines.map((x, xi) => xi === i ? { ...x, credit: Number(e.target.value) } : x))} />
                       </div>
                       <div>
                         <label className="text-[10px] text-slate-500 block mb-0.5">Party (optional)</label>
@@ -276,83 +288,25 @@ export default function VouchersPage() {
 
       {view && (
         <Modal title={`${view.voucher.voucherNo}`} onClose={() => setView(null)} full>
-          <div className="no-print mb-4 flex flex-wrap gap-2 justify-between border-b pb-3">
-            <div className="flex gap-2 items-center">
-              <span className="text-xs font-medium text-slate-500">Print Size:</span>
-              {["A4", "A5", "Thermal"].map((size) => (
-                <button key={size} onClick={() => setPrintLayout(size as "A4" | "A5" | "Thermal")}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold ${printLayout === size ? "bg-slate-900 text-white" : "bg-slate-100"}`}>{size}</button>
-              ))}
+          <div>
+            <div className="no-print mb-4 flex flex-wrap gap-2 justify-between border-b pb-3">
+              <div className="flex gap-2 items-center">
+                <span className="text-xs font-medium text-slate-500">Print Size:</span>
+                {["A4", "A5", "Thermal"].map((size) => (
+                  <button key={size} onClick={() => setPrintLayout(size as "A4" | "A5" | "Thermal")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold ${printLayout === size ? "bg-slate-900 text-white" : "bg-slate-100"}`}>{size}</button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Btn small tone="ghost" onClick={exportSingleCSV}>⬇️ Export Voucher CSV</Btn>
+                <Btn small onClick={() => window.print()}>🖨️ Print Voucher ({printLayout})</Btn>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Btn small tone="ghost" onClick={exportSingleCSV}>⬇️ Export Voucher CSV</Btn>
-              <Btn small onClick={() => window.print()}>🖨️ Print Voucher ({printLayout})</Btn>
-            </div>
-          </div>
 
-          <div className="print-area">
-            <LetterheadPrintWrapper title={`${TYPE_LABEL[view.voucher.voucherType] ?? view.voucher.voucherType} VOUCHER`} layout={printLayout}>
-              {printLayout === "A4" && (
-                <div>
-                  <div className="grid grid-cols-2 gap-y-1.5 text-[13px] border-b pb-4">
-                    <div>Voucher No: <b className="font-mono text-slate-900 text-sm">{view.voucher.voucherNo}</b></div>
-                    <div className="text-right">Date: <b>{String(view.voucher.date).slice(0, 10)}</b></div>
-                    <div className="col-span-2">Description / Narration: <span className="italic text-slate-700">{view.voucher.narration || "—"}</span></div>
-                    <div>Status: <Badge tone={view.voucher.status === "Cancelled" ? "red" : "green"}>{view.voucher.status}</Badge></div>
-                  </div>
-
-                  <table className="mt-4 w-full text-[13px]">
-                    <thead>
-                      <tr className="border-b-2 border-slate-900 bg-slate-50 text-left font-bold text-slate-800">
-                        <th className="px-3 py-2">Account</th>
-                        <th className="px-3 py-2">Narration</th>
-                        <th className="px-3 py-2">Party Link</th>
-                        <th className="px-3 py-2">Analytical Distribution</th>
-                        <th className="px-3 py-2 text-right">Debit (Dr)</th>
-                        <th className="px-3 py-2 text-right">Credit (Cr)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y border-b-2 border-slate-900">
-                      {view.lines.map((l, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
-                          <td className="px-3 py-2 font-medium">{accName(l.accountId)}</td>
-                          <td className="px-3 py-2 text-xs text-slate-600 italic">{l.narration || "—"}</td>
-                          <td className="px-3 py-2 text-xs">{partyName(l.partyId)}</td>
-                          <td className="px-3 py-2 text-xs text-slate-500 italic font-mono">{l.analyticalDistribution || "—"}</td>
-                          <td className="px-3 py-2 text-right font-semibold">{Number(l.debit) > 0 ? money(l.debit) : "—"}</td>
-                          <td className="px-3 py-2 text-right font-semibold">{Number(l.credit) > 0 ? money(l.credit) : "—"}</td>
-                        </tr>
-                      ))}
-                      <tr className="bg-slate-50 font-bold">
-                        <td className="px-3 py-2.5 uppercase" colSpan={4}>Voucher Total</td>
-                        <td className="px-3 py-2.5 text-right border-t border-slate-800">Rs {money(view.voucher.totalDebit)}</td>
-                        <td className="px-3 py-2.5 text-right border-t border-slate-800">Rs {money(view.voucher.totalCredit)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {/* Attachment Copy links rendering in view modal */}
-                  {view.voucher.documents && (
-                    <div className="mt-4 rounded-xl border p-4 bg-slate-50">
-                      <h3 className="font-bold text-xs text-slate-800 mb-2">📁 Attached Supporting Scans &amp; Bills</h3>
-                      <div className="flex flex-wrap gap-3">
-                        {view.voucher.documents.split(",").filter(Boolean).map((url, idx) => (
-                          <a key={idx} href={url} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white rounded-lg border px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-slate-100 shadow-sm">
-                            <span>📄 Supporting File {idx + 1}</span>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-16 flex justify-between text-xs text-slate-500">
-                    <span>Prepared by: _________________</span>
-                    <span>Checked by: _________________</span>
-                    <span>Approved by: _________________</span>
-                  </div>
-                </div>
-              )}
-
+            {printLayout === "A4" ? (
+              <ClassicVoucherPrint view={view} accCode={accCode} accTitle={accTitle} partyName={partyName} />
+            ) : (
+              <LetterheadPrintWrapper title={`${TYPE_LABEL[view.voucher.voucherType] ?? view.voucher.voucherType} VOUCHER`} layout={printLayout}>
               {printLayout === "A5" && (
                 <div>
                   <div className="grid grid-cols-2 gap-1 text-[11px] pb-2 border-b">
@@ -428,7 +382,8 @@ export default function VouchersPage() {
                   </div>
                 </div>
               )}
-            </LetterheadPrintWrapper>
+              </LetterheadPrintWrapper>
+            )}
           </div>
 
           <div className="no-print mt-4 flex justify-end gap-2">
@@ -472,6 +427,129 @@ export default function VouchersPage() {
       )}
 
       {toast}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------
+   Classic voucher print (A4) — mirrors the traditional manual voucher:
+   Company letterhead · italic voucher title · right-aligned date/no ·
+   A/c Code | Party | Narration | Dr | Cr | Chq/DD/TT · amount in words ·
+   Prepared / Checked / Approved signature blocks.
+------------------------------------------------------------------- */
+function ClassicVoucherPrint({
+  view, accCode, accTitle, partyName,
+}: {
+  view: { voucher: V; lines: Array<{ accountId: number | null; debit: string; credit: string; narration: string | null; partyId: number | null; chequeNo: string | null; chequeDate: string | null }> };
+  accCode: (id: number | null) => string;
+  accTitle: (id: number | null) => string;
+  partyName: (id: number | null) => string;
+}) {
+  const lh = useLetterhead();
+  const headerLines = (lh?.headerText ?? "Company Name").split("\n");
+  const companyName = headerLines[0] || "Company Name";
+  const contactLine = headerLines.slice(1).join(" · ");
+
+  const d = new Date(view.voucher.date);
+  const dateStr = `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${d.getFullYear()}`;
+  const title = TYPE_TITLE[view.voucher.voucherType] ?? `${view.voucher.voucherType} Voucher`;
+
+  // Group consecutive lines that share the same account (rowSpan like a manual voucher)
+  const groups: Array<{ code: string; name: string; parties: string[]; rows: typeof view.lines }> = [];
+  for (const l of view.lines) {
+    const code = accCode(l.accountId);
+    const last = groups[groups.length - 1];
+    if (last && last.code === code) { last.rows.push(l); last.parties.push(partyName(l.partyId)); }
+    else groups.push({ code, name: accTitle(l.accountId), parties: [partyName(l.partyId)], rows: [l] });
+  }
+
+  const tdTotal = view.lines.reduce((a, l) => a + Number(l.debit), 0);
+  const tcTotal = view.lines.reduce((a, l) => a + Number(l.credit), 0);
+  const words = `${amountInWords(tdTotal).toUpperCase()} ONLY`;
+  const cancelled = view.voucher.status === "Cancelled";
+
+  const cell = "border border-slate-700 px-2 py-1 align-top";
+  return (
+    <div className="mx-auto w-full max-w-[1000px] bg-white p-6 font-sans text-slate-900">
+      {/* Company heading (letterhead) */}
+      <div className="border-b-2 border-slate-900 pb-2">
+        <h1 className="text-2xl font-extrabold tracking-wide">{companyName}</h1>
+        {contactLine && <div className="text-[10px] text-slate-600">{contactLine}</div>}
+      </div>
+
+      <h2 className="mt-1 text-xl font-bold italic underline decoration-1">{title}</h2>
+
+      {/* Date / Voucher No — right aligned with dotted leaders */}
+      <div className="mt-2 flex flex-col items-end gap-0.5 text-[13px] font-semibold">
+        <div className="flex w-[280px] items-center justify-between">
+          <span className="italic">Date :</span>
+          <span className="border-b border-dotted border-slate-500 px-6 text-center">{dateStr}</span>
+        </div>
+        <div className="flex w-[280px] items-center justify-between">
+          <span className="italic">Voucher No. :</span>
+          <span className="border-b border-dotted border-slate-500 px-6 text-center">{view.voucher.voucherNo}</span>
+        </div>
+      </div>
+
+      {/* Postings table */}
+      <table className="mt-3 w-full border-collapse text-[12px]">
+        <thead>
+          <tr className="bg-slate-100">
+            <th className={`${cell} italic`}>A/c Code</th>
+            <th className={`${cell} italic`}>Party</th>
+            <th className={`${cell} italic`}>Narration</th>
+            <th className={`${cell} w-[90px] text-right italic`}>Dr. Amount</th>
+            <th className={`${cell} w-[90px] text-right italic`}>Cr. Amount</th>
+            <th className={`${cell} w-[110px] italic`}>Chq/DD/TT</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g, gi) => g.rows.map((l, li) => {
+            const first = li === 0;
+            return (
+              <tr key={`${gi}-${li}`} className={cancelled ? "line-through opacity-60" : ""}>
+                {first && <td className={`${cell} font-mono font-bold`} rowSpan={g.rows.length}>{g.code}</td>}
+                {first && (
+                  <td className={`${cell} italic`} rowSpan={g.rows.length}>
+                    {g.parties.filter((p, i, arr) => p && p !== "—").length
+                      ? g.parties.map((p, i) => <div key={i} className="truncate">{p}</div>)
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                )}
+                <td className={cell}>
+                  {first && <div className="font-bold">{g.name}</div>}
+                  <div className="italic">{l.narration || "\u00A0"}</div>
+                </td>
+                <td className={`${cell} text-right`}>{Number(l.debit) > 0 ? money(l.debit) : "\u00A0"}</td>
+                <td className={`${cell} text-right`}>{Number(l.credit) > 0 ? money(l.credit) : "\u00A0"}</td>
+                <td className={`${cell} italic`}>
+                  <div>Chq No. {l.chequeNo ? <b className="not-italic">{l.chequeNo}</b> : null}</div>
+                  <div>Date {l.chequeDate ? <b className="not-italic">{String(l.chequeDate).slice(0, 10)}</b> : null}</div>
+                </td>
+              </tr>
+            );
+          }))}
+          {/* Words + totals */}
+          <tr>
+            <td colSpan={3} className={`${cell} text-[12px] font-extrabold uppercase`}>{words}</td>
+            <td className={`${cell} text-right font-extrabold`}>{money(tdTotal)}</td>
+            <td className={`${cell} text-right font-extrabold`}>{money(tcTotal)}</td>
+            <td className={cell} />
+          </tr>
+        </tbody>
+      </table>
+
+      {cancelled && <div className="mt-2 text-center text-sm font-extrabold text-rose-700">*** THIS VOUCHER IS CANCELLED ***</div>}
+
+      {/* Signature blocks */}
+      <div className="mt-14 grid grid-cols-3 gap-10 text-center text-[12px]">
+        {["Prepared By", "Checked By", "Approved By"].map((label) => (
+          <div key={label}>
+            <div className="border-t border-slate-800" />
+            <div className="mt-1 font-bold italic">{label}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

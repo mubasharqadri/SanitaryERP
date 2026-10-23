@@ -69,3 +69,35 @@ export function stockBadge(qty: number): { label: string; cls: string } {
   if (qty <= 5) return { label: `Only ${qty} left`, cls: "bg-amber-100 text-amber-800 border-amber-200" };
   return { label: "In Stock", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" };
 }
+
+const W_ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+const W_TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function wTwoDigits(n: number): string {
+  if (n < 20) return W_ONES[n];
+  const t = Math.floor(n / 10), o = n % 10;
+  return W_TENS[t] + (o ? "-" + W_ONES[o] : "");
+}
+function wThreeDigits(n: number): string {
+  const h = Math.floor(n / 100), rest = n % 100;
+  return (h ? W_ONES[h] + " Hundred" : "") + (h && rest ? " " : "") + (rest ? wTwoDigits(rest) : "");
+}
+
+/** Amount in words using Pakistani numbering (crore / lakh / thousand). */
+export function amountInWords(value: number): string {
+  const n = Math.floor(Math.abs(value || 0));
+  const paisa = Math.round((Math.abs(value || 0) - n) * 100);
+  if (n === 0 && !paisa) return "Zero";
+  const crore = Math.floor(n / 10000000);
+  const lakh = Math.floor((n % 10000000) / 100000);
+  const thousand = Math.floor((n % 100000) / 1000);
+  const rest = n % 1000;
+  const parts: string[] = [];
+  if (crore) parts.push(wTwoDigits(crore) + " Crore");
+  if (lakh) parts.push(wTwoDigits(lakh) + " Lakh");
+  if (thousand) parts.push(wTwoDigits(thousand) + " Thousand");
+  if (rest) parts.push(wThreeDigits(rest));
+  let words = parts.join(" ");
+  if (paisa) words += (words ? " and " : "") + wTwoDigits(paisa) + " Paisa";
+  return words;
+}

@@ -91,13 +91,14 @@ export function computeLineTax(l: DocLineInput, opts: {
       : (["goods", "services", "contract"].includes(opts.defaultAitSection) ? opts.defaultAitSection : "none"));
   const rawRate = (l as { aitRate?: number | string }).aitRate;
   const filer = opts.buyerFiler;
-  const resolved = section === "goods"
+  const scheduled = section === "goods"
     ? (filer === "filer" ? num(opts.aitGoodsFiler) : filer === "late_filer" ? num(opts.aitGoodsLate) : num(opts.aitGoodsNon))
     : section === "services"
       ? (filer === "filer" ? num(opts.aitServicesFiler) : filer === "late_filer" ? num(opts.aitServicesLate) : num(opts.aitServicesNon))
       : (filer === "filer" ? num(opts.aitContractFiler) : filer === "late_filer" ? num(opts.aitContractLate) : num(opts.aitContractNon));
-  const aitRate = section === "none" ? 0
-    : (rawRate !== undefined && rawRate !== null && rawRate !== "" ? num(rawRate) : resolved);
+  // Exempt / zero-rated supplies carry no withholding unless a rate is explicitly given
+  const aitRate = section === "none" || (exempt && rawRate === undefined) ? 0
+    : (rawRate !== undefined && rawRate !== null && rawRate !== "" ? num(rawRate) : scheduled);
   const aitAmount = round2((taxable * aitRate) / 100);
 
   return {

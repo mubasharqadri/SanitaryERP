@@ -26,7 +26,7 @@ export default function TaxReportPage() {
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"/><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #cbd5e1; padding: 6px; font-family: Arial, sans-serif; } .header-row { font-weight: bold; background-color: #f1f5f9; }</style></head>
       <body>
-        <h2>Al-Noor Sanitary &amp; Tiles — Sales Tax &amp; AIT Monthly Return Working</h2>
+        <h2>Awami ERP — Sales Tax &amp; AIT Monthly Return Working</h2>
         ${table.innerHTML}
       </body>
       </html>
@@ -53,7 +53,7 @@ export default function TaxReportPage() {
       {loading || !s ? <div className="text-slate-500">Loading…</div> : (
         <div className="print-area space-y-4" id="tax-report-container">
           <div className="text-center no-print-only hidden print:block">
-            <h2 className="text-xl font-bold">Al-Noor Sanitary &amp; Tiles</h2>
+            <h2 className="text-xl font-bold">Awami ERP</h2>
             <div className="text-xs text-slate-500">Main G.T. Road, Gujranwala | NTN: 1234567-8 | STRN: 3277876123456</div>
             <h3 className="text-sm font-semibold text-indigo-700 mt-1 uppercase">Monthly Tax Report ({month})</h3>
           </div>

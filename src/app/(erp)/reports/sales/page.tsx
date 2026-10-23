@@ -22,7 +22,7 @@ export default function SalesReportPage() {
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"/><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #cbd5e1; padding: 6px; font-family: Arial, sans-serif; }</style></head>
       <body>
-        <h2>Al-Noor Sanitary &amp; Tiles — Commercial Sales &amp; POS Report</h2>
+        <h2>Awami ERP — Commercial Sales &amp; POS Report</h2>
         <p>Period: ${from} to ${to}</p>
         ${table.innerHTML}
       </body>

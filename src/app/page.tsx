@@ -93,7 +93,7 @@ export default function Storefront() {
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-indigo-600 to-blue-800 text-2xl text-white">🏛️</div>
             <div>
-              <div className="text-lg font-extrabold text-slate-900">Al-Noor Sanitary &amp; Tiles</div>
+              <div className="text-lg font-extrabold text-slate-900">Awami ERP</div>
               <div className="text-xs text-slate-500">Sanitary · Tiles · Brass Fittings — Gujranwala</div>
             </div>
           </div>
@@ -200,7 +200,7 @@ export default function Storefront() {
       <footer className="border-t border-slate-800 bg-slate-900 text-slate-300">
         <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 md:grid-cols-3">
           <div>
-            <div className="text-lg font-bold text-white">🏛️ Al-Noor Sanitary &amp; Tiles</div>
+            <div className="text-lg font-bold text-white">🏛️ Awami ERP</div>
             <p className="mt-2 text-sm">Main G.T. Road, Gujranwala<br />055-1234567 · info@alnoorsanitory.pk<br />Mon–Sat 9am–9pm</p>
           </div>
           <div>
@@ -217,7 +217,7 @@ export default function Storefront() {
             <Link href="/login" className="mt-3 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">🔐 Staff Login</Link>
           </div>
         </div>
-        <div className="border-t border-slate-800 py-4 text-center text-xs text-slate-500">© 2026 Al-Noor Sanitary &amp; Tiles · Sanitary ERP v1.0</div>
+        <div className="border-t border-slate-800 py-4 text-center text-xs text-slate-500">© 2026 Awami ERP · Awami ERP v1.0</div>
       </footer>
     </div>
   );

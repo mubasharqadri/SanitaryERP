@@ -25,8 +25,8 @@ export default function CommissionPage() {
     const table = document.getElementById(tableId);
     if (!table) return;
     const title = type === "summary"
-      ? "Al-Noor Sanitary & Tiles — Salesmen Commission Balances Summary"
-      : `Al-Noor Sanitary & Tiles — Detailed Commission Ledger for ${ledgerData?.salesman?.name ?? ""}`;
+      ? "Awami ERP — Salesmen Commission Balances Summary"
+      : `Awami ERP — Detailed Commission Ledger for ${ledgerData?.salesman?.name ?? ""}`;
 
     const html = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
